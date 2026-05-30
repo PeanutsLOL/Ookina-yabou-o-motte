@@ -159,6 +159,16 @@ class TestCalculateScore:
             pass  # 不强制要求找到累计役满, 但搜索应完成
 
 
+    def test_case_8_fast_mode(self):
+        """用例8: 最快和牌模式 - 123456789m111p2s 应1-2巡内能和"""
+        state = build_state("123456789m111p2s")
+        result = search_max_score(state, max_depth=4, enable_pruning=True, mode="fast")
+        assert result.max_score >= 1, f"最快模式应找到和牌路径, got {result.max_score}"
+        # 最快路径应 ≤ 3 巡
+        draws = len([a for a, _ in result.best_path if a == 'draw'])
+        assert draws <= 3, f"应在3巡内和牌, got {draws}"
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

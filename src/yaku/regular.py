@@ -264,3 +264,56 @@ def calculate_regular_han(state: GameState) -> int:
                             state.ura_dora_indicators)
 
     return total
+
+
+def has_any_yaku(state: GameState) -> bool:
+    """
+    检查14张和牌是否有任何役(≥1翻)。用于"最快和牌"模式。
+
+    检查最基础的役种: 断幺九, 役牌, 平和, 一杯口, 七对子, 立直, 门前自摸。
+    只要有任何一种即返回True。
+    """
+    hand = state.hand
+
+    if not _has_valid_mentsu_decomp(hand):
+        return False
+
+    # 断幺九 (1翻)
+    if check_tanyao(hand):
+        return True
+
+    # 役牌: 自风/场风/三元 刻子
+    yakuhai_tiles = set()
+    if state.player_wind:
+        yakuhai_tiles.add(state.player_wind)
+    if state.round_wind:
+        yakuhai_tiles.add(state.round_wind)
+    yakuhai_tiles.update([31, 32, 33])  # 白发中
+    for t in yakuhai_tiles:
+        if hand[t] >= 3:
+            return True
+
+    # 平和 (1翻, 需门清)
+    if state.is_menzen:
+        from ..decompose import has_valid_decomposition
+        if has_valid_decomposition(hand):
+            # 简化: 有4顺子拆分就可能有平和
+            shuntsu = _count_sequences(hand)
+            if len(shuntsu) == 4:
+                return True
+
+    # 一杯口 (1翻, 门清)
+    if state.is_menzen and check_iipeikou(hand):
+        return True
+
+    # 七对子 (2翻, 门清)
+    if state.is_menzen:
+        from ..decompose import check_seven_pairs
+        if check_seven_pairs(hand):
+            return True
+
+    # 门清自摸 或 立直 (至少1翻)
+    if state.is_menzen:
+        return True  # 门清自摸=1翻
+
+    return False

@@ -146,7 +146,19 @@ def run_cli():
     # Step 3: 输入牌河（可选）
     river = _input_river()
 
-    # Step 4: 输入巡目
+    # Step 4: 选择模式
+    print()
+    print("搜索模式:")
+    print("  1. 最大番数 (默认) - 寻找最高役满倍数")
+    print("  2. 最快和牌 - 最少摸牌次数内和任意有役手牌")
+    try:
+        mode_str = input("选择模式 (1/2, 直接回车=1): ").strip()
+        mode = "fast" if mode_str == "2" else "max"
+    except KeyboardInterrupt:
+        mode = "max"
+    print(f"  模式: {'最快和牌' if mode == 'fast' else '最大番数'}")
+
+    # Step 5: 输入巡目
     print()
     try:
         turn_str = input("当前巡目 (直接回车=5): ").strip()
@@ -171,11 +183,11 @@ def run_cli():
         # 仅从手牌和宝牌指示牌计算
         state.init_rest_from_visible()
 
-    # Step 6: 搜索
+    # Step 7: 搜索
     print("\n" + "-" * 40)
     print("正在搜索...")
 
-    result = search_max_score(state, max_depth=max_depth, enable_pruning=True)
+    result = search_max_score(state, max_depth=max_depth, enable_pruning=True, mode=mode)
 
     # 无剪枝对比
     nodes_no_prune = search_no_pruning(state, max_depth=max_depth)
@@ -187,13 +199,12 @@ def run_cli():
     print("=" * 60)
 
     if result.max_score == 0:
-        print("\n  ★ 未找到役满路径")
+        print("\n  ★ 未找到和牌路径")
         print(f"  (搜索了 {result.nodes_searched} 个节点)")
-    else:
-        score_str = f"{result.max_score}倍役满 ({result.max_score * 13}番)"
-        print(f"\n  ★ 理论最大番数: {score_str}")
+    elif mode == "fast":
+        turns = len([a for a, _ in result.best_path if a == 'draw'])
+        print(f"\n  ★ 最快和牌: {turns} 巡内可和")
 
-        # 最终和牌牌型
         if result.final_hand:
             tiles = []
             for t, c in enumerate(result.final_hand):
@@ -202,7 +213,21 @@ def run_cli():
             print(f"\n  【和牌牌型】")
             print(f"  {'  '.join(tiles)}")
 
-        # 役种明细
+        print(f"\n  【达成路径】")
+        for i, (action, tile) in enumerate(result.best_path, 1):
+            print(f"    {i}. {action} → {tile_name(tile)}")
+    else:
+        score_str = f"{result.max_score}倍役满 ({result.max_score * 13}番)"
+        print(f"\n  ★ 理论最大番数: {score_str}")
+
+        if result.final_hand:
+            tiles = []
+            for t, c in enumerate(result.final_hand):
+                if c > 0:
+                    tiles.append(f"{tile_name(t)}×{c}")
+            print(f"\n  【和牌牌型】")
+            print(f"  {'  '.join(tiles)}")
+
         if result.yaku_details:
             print(f"\n  【役种明细】")
             for d in result.yaku_details:
