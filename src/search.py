@@ -126,6 +126,13 @@ def calculate_score(state: GameState,
     # 5. 四杠子: 杠状态, 可与任何役满共存
     score += suukantsu
 
+    # 6. 累计役满(数え役满): 无真役满时, 检查普通番是否≥13
+    if score == 0:
+        from .yaku.regular import calculate_regular_han
+        regular_han = calculate_regular_han(state)
+        if regular_han >= 13:
+            score = 1  # 累计役满=1倍役满
+
     return score
 
 
@@ -216,6 +223,26 @@ def _useful_draws(state: GameState, waits: List[int]) -> List[int]:
         for t in range(NUM_TILES):
             if hand[t] >= 1:
                 useful.add(t)
+
+    # ── 兜底3: 为累计役满添加宝牌相关牌 ──
+    # 搜索阶段可能通过累计普通役种+宝牌达成数え役满
+    if state.dora_indicators:
+        from .tile import dora_indicator_to_dora
+        for ind in state.dora_indicators:
+            dora = dora_indicator_to_dora(ind)
+            if state.rest[dora] > 0:
+                useful.add(dora)
+    # 添加相邻牌（靠张）
+    for t in range(NUM_TILES):
+        if hand[t] >= 1 and t not in useful and state.rest[t] > 0:
+            s = suit(t)
+            if s != SUIT_JIHAI:
+                n = t % 9
+                for dn in (-2, -1, 1, 2):
+                    adj = t + dn
+                    if 0 <= adj < s*9+9 and hand[adj] >= 1 and state.rest[t] > 0:
+                        useful.add(t)
+                        break
 
     # 过滤掉已用完的牌
     result = [t for t in useful if state.rest[t] > 0 and state.hand[t] < 4]
