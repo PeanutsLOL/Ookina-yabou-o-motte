@@ -111,6 +111,23 @@ class TestCalculateScore:
         assert score == 0  # 13张不计算番数
 
 
+    def test_case_5_chuuren_potential(self):
+        """用例5: 123456789m111p2s — 深度6可做九莲宝灯"""
+        state = build_state("123456789m111p2s")
+        assert state.hand_size == 13
+        # 需要: 摸入1m×2+9m×2+任意1m, 弃掉1p×3+2s = 5摸+4弃
+        result = search_max_score(state, max_depth=7, enable_pruning=True)
+        assert result.max_score >= 1, f"应找到九莲宝灯, got {result.max_score}"
+        assert result.nodes_searched < 100000
+
+    def test_case_5_chuuren_deep(self):
+        """用例5: depth=8 也应找到"""
+        state = build_state("123456789m111p2s")
+        result = search_max_score(state, max_depth=8, enable_pruning=True)
+        assert result.max_score >= 1, f"应找到九莲宝灯, got {result.max_score}"
+        assert result.elapsed_ms < 5000
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

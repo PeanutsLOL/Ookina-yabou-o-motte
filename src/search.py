@@ -139,29 +139,28 @@ def _useful_draws(state: GameState, waits: List[int]) -> List[int]:
     useful: set[int] = set()
 
     # ── 分析役满潜力 ──────────────────────
-    # 清老头潜力: 手牌中老头牌占比
+    # 核心思路: 降低各役满门槛，宁可多搜不漏搜
+    dominant_suit = -1
+    dominant_count = 0
+
+    # 清老头潜力
     terminal_count = sum(hand[t] for t in (0, 8, 9, 17, 18, 26))
-    non_terminal_count = state.hand_size - terminal_count
-    # 只算数牌中的非老头 (不含字牌, 字牌不计入清老头)
     non_terminal_numbers = sum(
         hand[t] for t in range(27)
         if t not in (0, 8, 9, 17, 18, 26)
     )
-    if non_terminal_numbers <= 3 and terminal_count >= 8:
-        # 接近清老头, 只摸老头牌
+    if non_terminal_numbers <= 5 and terminal_count >= 7:
         useful.update({0, 8, 9, 17, 18, 26})
 
-    # 国士无双潜力: 幺九牌种类数
+    # 国士无双潜力
     present_yaochu = sum(1 for t in YAOCHU_TILES if hand[t] >= 1)
-    if present_yaochu >= 8:  # 至少8种幺九才值得追
+    if present_yaochu >= 7:
         useful.update(YAOCHU_TILES)
 
-    # 字一色 / 风牌/三元牌 潜力
+    # 字一色 / 风牌/三元牌
     honor_count = sum(hand[t] for t in range(27, 34))
-    if honor_count >= 8:
+    if honor_count >= 7:
         useful.update(range(27, 34))
-
-    # 大四喜/小四喜/大三元: 风牌/三元牌 ≥ 6张
     wind_count = sum(hand[t] for t in range(27, 31))
     dragon_count = sum(hand[t] for t in range(31, 34))
     if wind_count >= 6:
@@ -169,25 +168,36 @@ def _useful_draws(state: GameState, waits: List[int]) -> List[int]:
     if dragon_count >= 6:
         useful.update(range(31, 34))
 
-    # 九莲宝灯潜力: 单花色 ≥ 10张
+    # 九莲宝灯/清一色潜力: 找主导花色
     for base in (0, 9, 18):
         suit_count = sum(hand[base:base+9])
-        if suit_count >= 10:
+        if suit_count > dominant_count:
+            dominant_count = suit_count
+            dominant_suit = base
+        if suit_count >= 8:
             useful.update(range(base, base + 9))
 
-    # 绿一色潜力: 绿牌 ≥ 8张
+    # 绿一色潜力
     green_count = sum(hand[t] for t in GREEN_TILES)
-    if green_count >= 8:
+    if green_count >= 7:
         useful.update(GREEN_TILES)
 
-    # 四暗刻潜力: 手牌中已有的对子/刻子的牌
+    # 四暗刻潜力: 对子/刻子
     for t in range(NUM_TILES):
         if hand[t] >= 2:
             useful.add(t)
 
-    # ── 如果没有任何方向, 返回空 ──
+    # ── 兜底: 主导花色 ≥ 7 张 → 至少追清一色/九莲 ──
+    if not useful and dominant_count >= 7:
+        useful.update(range(dominant_suit, dominant_suit + 9))
+        # 再加入幺九牌(万一转国士)
+        useful.update(YAOCHU_TILES)
+
+    # ── 兜底2: 仍然空 → 摸所有已有牌的种类(至少能凑对子/刻子) ──
     if not useful:
-        return []
+        for t in range(NUM_TILES):
+            if hand[t] >= 1:
+                useful.add(t)
 
     # 过滤掉已用完的牌
     result = [t for t in useful if state.rest[t] > 0 and state.hand[t] < 4]
@@ -202,12 +212,12 @@ def _useful_draws(state: GameState, waits: List[int]) -> List[int]:
 
 def _discard_candidates(state: GameState, waits: Optional[List[int]] = None) -> List[int]:
     """
-    弃牌候选排序: 优先弃孤立牌/非听牌。
+    弃牌候选排序: 优先弃孤立牌/非目标花色牌。
 
     策略:
-      1. 如果已听牌: 只弃非听牌（安全弃牌）
-      2. 如果未听牌: 弃孤立牌（只有1张且不与相邻牌构成搭子）
-      3. 限制最多 8 个弃牌候选，控制分支因子
+      1. 已听牌: 只弃非听牌
+      2. 未听牌: 先弃孤立牌 → 非主导花色 → 其他
+      3. 限制最多 6 个弃牌候选
     """
     from .tile import suit, SUIT_JIHAI
 
@@ -215,56 +225,70 @@ def _discard_candidates(state: GameState, waits: Optional[List[int]] = None) -> 
         waits = []
 
     hand = state.hand
-    candidates = []
-    singles = []
+
+    # ── 找主导花色 ──
+    suit_counts = [sum(hand[b:b+9]) for b in (0, 9, 18)]
+    max_suit = max(suit_counts)
+    dominant_suit = suit_counts.index(max_suit) if max_suit >= 8 else -1
+
+    singles = []        # 孤立牌
+    minority = []       # 非主导花色的牌
+    majority_singles = []  # 主导花色中的孤立牌(最后才弃)
+    others = []
 
     for t in range(NUM_TILES):
         if hand[t] <= 0:
             continue
 
-        # 已听牌时: 只弃非听牌
+        # 已听牌: 只弃非听牌
         if waits:
             if t not in waits:
-                candidates.append(t)
+                others.append(t)
             continue
 
-        # 未听牌时: 评估是否为孤立牌
-        if hand[t] == 1:
-            s = suit(t)
-            n = t % 9
-            is_isolated = True
+        # 未听牌: 分析每张牌
+        s = suit(t)
+        n = t % 9
 
-            # 检查是否有相邻牌构成搭子
+        # 检查是否孤立
+        is_isolated = False
+        if hand[t] == 1:
+            is_isolated = True
             if s != SUIT_JIHAI:
-                # 检查 ±1 和 ±2 是否有牌
                 if n >= 1 and hand[t - 1] >= 1:
                     is_isolated = False
                 if n <= 7 and hand[t + 1] >= 1:
                     is_isolated = False
                 if n >= 2 and hand[t - 2] >= 1:
-                    is_isolated = False  # 坎张搭子
+                    is_isolated = False
             else:
-                # 字牌: 如果只有1张且不是对子 → 孤立
                 if hand[t] >= 2:
                     is_isolated = False
 
-            if is_isolated:
-                singles.append(t)
+        # 分类
+        if is_isolated:
+            if dominant_suit >= 0 and s != dominant_suit and s != SUIT_JIHAI:
+                # 非主导花色的孤立牌 → 最优先弃
+                singles.insert(0, t)
+            elif dominant_suit >= 0 and s == dominant_suit:
+                # 主导花色的孤立牌 → 最后才弃
+                majority_singles.append(t)
             else:
-                candidates.append(t)
+                singles.append(t)
+        elif dominant_suit >= 0 and s != dominant_suit and s != SUIT_JIHAI:
+            # 非主导花色的非孤立牌(如刻子/对子) → 也应优先弃
+            minority.append(t)
         else:
-            candidates.append(t)
+            others.append(t)
 
-    # 孤立牌优先丢弃
-    candidates = singles + candidates
+    # 最终顺序: 非目标花色孤立牌 → 非目标花色 → 其他孤立牌 → 其他 → 主导花色孤立牌
+    candidates = singles + minority + majority_singles + others
 
-    # 限制候选数量
-    if len(candidates) > 8:
-        candidates = candidates[:8]
+    if len(candidates) > 6:
+        candidates = candidates[:6]
 
     if not candidates:
-        # 兜底: 所有牌都可以弃
-        candidates = [t for t in range(NUM_TILES) if hand[t] > 0][:8]
+        candidates = [t for t in range(NUM_TILES) if hand[t] > 0][:6]
 
     return candidates
 
