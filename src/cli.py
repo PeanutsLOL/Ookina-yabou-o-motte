@@ -146,7 +146,20 @@ def run_cli():
     # Step 3: 输入牌河（可选）
     river = _input_river()
 
-    # Step 4: 选择模式
+    # Step 4: 输入自风和场风 (用于役牌判定)
+    print()
+    wind_names = {"1": "东", "2": "南", "3": "西", "4": "北"}
+    wind_tiles = {"1": 27, "2": 28, "3": 29, "4": 30}
+    try:
+        pw = input("自风 (1=东/2=南/3=西/4=北, 直接回车=东): ").strip()
+        player_wind = wind_tiles.get(pw, 27)
+        rw = input("场风 (1=东/2=南/3=西/4=北, 直接回车=东): ").strip()
+        round_wind = wind_tiles.get(rw, 27)
+    except KeyboardInterrupt:
+        player_wind, round_wind = 27, 27
+    print(f"  自风: {wind_names.get(str(player_wind-26), '东')}, 场风: {wind_names.get(str(round_wind-26), '东')}")
+
+    # Step 5: 选择模式
     print()
     print("搜索模式:")
     print("  1. 最大番数 (默认) - 寻找最高役满倍数")
@@ -158,7 +171,7 @@ def run_cli():
         mode = "max"
     print(f"  模式: {'最快和牌' if mode == 'fast' else '最大番数'}")
 
-    # Step 5: 输入巡目
+    # Step 6: 输入巡目
     print()
     try:
         turn_str = input("当前巡目 (直接回车=5): ").strip()
@@ -174,6 +187,8 @@ def run_cli():
         hand=hand,
         dora_indicators=dora_indicators,
         turn=turn,
+        player_wind=player_wind,
+        round_wind=round_wind,
     )
 
     # 初始化剩余牌

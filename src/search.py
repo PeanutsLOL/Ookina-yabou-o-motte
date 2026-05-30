@@ -346,6 +346,47 @@ def _discard_candidates(state: GameState, waits: Optional[List[int]] = None) -> 
     return candidates
 
 
+def _gen_melds(state: GameState) -> list:
+    """
+    快模式: 生成可行的鸣牌动作 (碰/吃/明杠)。
+
+    返回: [(meld_type, called_tile, [hand_tiles]), ...]
+    """
+    from .tile import suit, SUIT_JIHAI
+
+    hand = state.hand
+    rest = state.rest
+    actions = []
+
+    # ── 碰: 手中有≥2张, 剩余牌山中≥1张 ──
+    for t in range(NUM_TILES):
+        if hand[t] >= 2 and rest[t] >= 1:
+            actions.append(('pon', t, [t, t]))
+
+    # ── 吃: 手中有2张可组成顺子, 剩余牌山中有衔接牌 ──
+    for t in range(NUM_TILES):
+        if rest[t] <= 0:
+            continue
+        s = suit(t)
+        if s == SUIT_JIHAI:
+            continue
+        n = t % 9
+
+        # 吃法1: t做第一张, 需要 hand[t+1]>=1 and hand[t+2]>=1
+        if n <= 6 and hand[t+1] >= 1 and hand[t+2] >= 1:
+            actions.append(('chi', t, [t+1, t+2]))
+        # 吃法2: t做第二张, 需要 hand[t-1]>=1 and hand[t+1]>=1
+        if 1 <= n <= 7 and hand[t-1] >= 1 and hand[t+1] >= 1:
+            actions.append(('chi', t, [t-1, t+1]))
+        # 吃法3: t做第三张, 需要 hand[t-2]>=1 and hand[t-1]>=1
+        if n >= 2 and hand[t-2] >= 1 and hand[t-1] >= 1:
+            actions.append(('chi', t, [t-2, t-1]))
+
+    # 优先碰(完成刻子比顺子快)
+    actions.sort(key=lambda a: 0 if a[0] == 'pon' else 1)
+    return actions
+
+
 def _describe_yaku(state: GameState, score: int,
                     tenpai_hand: List[int] = None) -> List[str]:
     """生成役种明细文字列表"""
@@ -497,7 +538,10 @@ def search_max_score(
             path.append(('draw', draw_tile))
 
             # ——— 和牌检查 ———
-            if can_agari(state.hand):
+            # 快模式: 和牌手牌数 = 14 - 2*n_melds (每次碰/吃减2张手牌)
+            meld_count = sum(1 for a, _ in path if a in ('pon', 'chi', 'kan'))
+            target_size = 14 - 2 * meld_count
+            if state.hand_size == target_size and can_agari(state.hand):
                 if mode == "fast":
                     from .yaku.regular import has_any_yaku
                     if has_any_yaku(state):
@@ -511,21 +555,22 @@ def search_max_score(
                         state.hand[draw_tile] -= 1
                         return
                 else:
-                    tenpai = state.hand.copy()
-                    tenpai[draw_tile] -= 1
-                    s = calculate_score(state, tenpai_hand=tenpai)
-                    if s > best_score:
-                        best_score = s
-                        best_path = path.copy()
-                        best_hand = state.hand.copy()
-                        best_yaku = _describe_yaku(state, s, tenpai_hand=tenpai)
-                        if best_score >= 6:
-                            path.pop()
-                            state.rest[draw_tile] += 1
-                            state.hand[draw_tile] -= 1
-                            return
+                    if target_size == 14:  # max模式不处理鸣牌
+                        tenpai = state.hand.copy()
+                        tenpai[draw_tile] -= 1
+                        s = calculate_score(state, tenpai_hand=tenpai)
+                        if s > best_score:
+                            best_score = s
+                            best_path = path.copy()
+                            best_hand = state.hand.copy()
+                            best_yaku = _describe_yaku(state, s, tenpai_hand=tenpai)
+                            if best_score >= 6:
+                                path.pop()
+                                state.rest[draw_tile] += 1
+                                state.hand[draw_tile] -= 1
+                                return
 
-            # ——— 弃牌 → 递归 ———
+            # ——— 弃牌/鸣牌 → 递归 ———
             if depth + 1 < max_depth and not found:
                 if mode == "max" and best_score > 0:
                     if optimistic_bonus(state, remaining_draws - 1) <= best_score:
@@ -559,6 +604,44 @@ def search_max_score(
                     path.pop()
                     state.rest[discard_tile] -= 1
                     state.hand[discard_tile] += 1
+
+            # ——— 快模式鸣牌 (碰/吃) ———
+            if mode == "fast" and depth + 1 < max_depth and not found:
+                meld_actions = _gen_melds(state)
+                for meld_type, called_tile, hand_tiles in meld_actions[:3]:
+                    if found:
+                        break
+                    # 从手牌移除面子牌
+                    for ht in hand_tiles:
+                        if state.hand[ht] <= 0:
+                            break
+                    else:
+                        for ht in hand_tiles:
+                            state.hand[ht] -= 1
+                        state.rest[called_tile] -= 1
+                        path.append((meld_type, called_tile))
+
+                        # 鸣牌后弃1张 → 递归
+                        post_discards = _discard_candidates(state)[:3]
+                        for discard_tile in post_discards:
+                            if found:
+                                break
+                            if state.hand[discard_tile] <= 0:
+                                continue
+                            state.hand[discard_tile] -= 1
+                            state.rest[discard_tile] += 1
+                            path.append(('discard', discard_tile))
+
+                            search(state, depth + 1, path)
+
+                            path.pop()
+                            state.rest[discard_tile] -= 1
+                            state.hand[discard_tile] += 1
+
+                        path.pop()
+                        state.rest[called_tile] += 1
+                        for ht in hand_tiles:
+                            state.hand[ht] += 1
 
             path.pop()
             state.rest[draw_tile] += 1
