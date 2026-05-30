@@ -232,6 +232,8 @@ class SearchResult:
     """
     max_score: int = 0
     best_path: List[Tuple[str, int]] = field(default_factory=list)
+    final_hand: List[int] = field(default_factory=list)  # 最终14张和牌
+    yaku_details: List[str] = field(default_factory=list)  # 役种明细
     nodes_searched: int = 0
     nodes_pruned: int = 0
     nodes_no_prune: int = -1  # -1 表示未测试
@@ -252,14 +254,36 @@ class SearchResult:
         else:
             score_str = f"{yakuman_count}倍役满 ({yakuman_count * 13}番)"
 
+        # 最终牌型
+        hand_str = ""
+        if self.final_hand:
+            from .tile import counts_to_str, tile_name
+            hand_str = counts_to_str(self.final_hand)
+            # 展开为可读列表
+            tiles = []
+            for t, c in enumerate(self.final_hand):
+                if c > 0:
+                    tiles.append(f"{tile_name(t)}×{c}")
+            hand_str = "  ".join(tiles)
+
+        # 役种明细
+        yaku_str = ""
+        if self.yaku_details:
+            yaku_str = "\n".join(f"    • {d}" for d in self.yaku_details)
+
         path_str = " → ".join(
             f"{action}({tile_name(tile)})"
             for action, tile in self.best_path
         )
 
-        return (
-            f"理论最大番数: {score_str}\n"
-            f"达成路径: {path_str}\n"
-            f"搜索节点: {self.nodes_searched} (剪枝: {self.nodes_pruned})\n"
-            f"耗时: {self.elapsed_ms:.2f}ms"
-        )
+        lines = [
+            f"理论最大番数: {score_str}",
+        ]
+        if hand_str:
+            lines.append(f"和牌牌型: {hand_str}")
+        if yaku_str:
+            lines.append(f"役种明细:\n{yaku_str}")
+        lines.append(f"达成路径: {path_str}")
+        lines.append(f"搜索节点: {self.nodes_searched} (剪枝: {self.nodes_pruned})")
+        lines.append(f"耗时: {self.elapsed_ms:.2f}ms")
+        return "\n".join(lines)

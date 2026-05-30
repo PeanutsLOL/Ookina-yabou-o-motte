@@ -192,7 +192,23 @@ def run_cli():
     else:
         score_str = f"{result.max_score}倍役满 ({result.max_score * 13}番)"
         print(f"\n  ★ 理论最大番数: {score_str}")
-        print(f"\n  达成路径:")
+
+        # 最终和牌牌型
+        if result.final_hand:
+            tiles = []
+            for t, c in enumerate(result.final_hand):
+                if c > 0:
+                    tiles.append(f"{tile_name(t)}×{c}")
+            print(f"\n  【和牌牌型】")
+            print(f"  {'  '.join(tiles)}")
+
+        # 役种明细
+        if result.yaku_details:
+            print(f"\n  【役种明细】")
+            for d in result.yaku_details:
+                print(f"    {d}")
+
+        print(f"\n  【达成路径】")
         for i, (action, tile) in enumerate(result.best_path, 1):
             print(f"    {i}. {action} → {tile_name(tile)}")
 

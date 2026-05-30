@@ -346,6 +346,58 @@ def _discard_candidates(state: GameState, waits: Optional[List[int]] = None) -> 
     return candidates
 
 
+def _describe_yaku(state: GameState, score: int,
+                    tenpai_hand: List[int] = None) -> List[str]:
+    """生成役种明细文字列表"""
+    details = []
+    hand = state.hand
+
+    kokushi = check_kokushi(hand)
+    suuankou = check_suuankou(hand, state.melds)
+    daisangen = check_daisangen(hand)
+    chuuren = check_chuuren(hand)
+    daisuushi = check_daisuushi(hand)
+    shousuushi = check_shousuushi(hand)
+    tsuuiisou = check_tsuuiisou(hand)
+    ryuuiisou = check_ryuuiisou(hand)
+    chinroutou = check_chinroutou(hand)
+    suukantsu = check_suukantsu(hand, state.melds)
+
+    # 四暗刻单骑判定
+    if tenpai_hand and suuankou > 0:
+        tanki = check_suuankou(tenpai_hand, state.melds)
+        if tanki == 2:
+            suuankou = 2
+
+    if kokushi >= 2: details.append("国士无双十三面 (双倍役满)")
+    elif kokushi == 1: details.append("国士无双 (役满)")
+    if chuuren >= 2: details.append("纯正九莲宝灯 (双倍役满)")
+    elif chuuren == 1: details.append("九莲宝灯 (役满)")
+    if daisuushi >= 2: details.append("大四喜 (双倍役满)")
+    if shousuushi and not daisuushi: details.append("小四喜 (役满)")
+    if daisangen: details.append("大三元 (役满)")
+    if suuankou >= 2: details.append("四暗刻单骑 (双倍役满)")
+    elif suuankou == 1: details.append("四暗刻 (役满)")
+    if tsuuiisou: details.append("字一色 (役满)")
+    if ryuuiisou: details.append("绿一色 (役满)")
+    if chinroutou: details.append("清老头 (役满)")
+    if suukantsu: details.append("四杠子 (役满)")
+
+    # 累计役满判定
+    if score == 1 and not details:
+        from .yaku.regular import calculate_regular_han, calculate_dora
+        han = calculate_regular_han(state)
+        dora = calculate_dora(hand, state.dora_indicators, state.ura_dora_indicators)
+        details.append(f"累计役满 (数え役满, {han}翻)")
+        if dora > 0:
+            details.append(f"  含宝牌 {dora} 翻")
+
+    if not details:
+        details.append(f"役满 ({score}倍)")
+
+    return details
+
+
 def search_max_score(
     initial_state: GameState,
     max_depth: int = 5,
@@ -369,6 +421,8 @@ def search_max_score(
     """
     best_score = 0
     best_path: List[Tuple[str, int]] = []
+    best_hand: List[int] = []       # 最优和牌的14张手牌
+    best_yaku: List[str] = []       # 最优和牌的役种明细
     nodes_searched = 0
     nodes_pruned = 0
     visited: dict = {}  # (hand_tuple, depth) → avoid re-search
@@ -377,7 +431,7 @@ def search_max_score(
 
     def search(state: GameState, depth: int,
                path: List[Tuple[str, int]]):
-        nonlocal best_score, best_path, nodes_searched, nodes_pruned
+        nonlocal best_score, best_path, best_hand, best_yaku, nodes_searched, nodes_pruned
 
         nodes_searched += 1
 
@@ -423,6 +477,8 @@ def search_max_score(
                 if s > best_score:
                     best_score = s
                     best_path = path.copy()
+                    best_hand = state.hand.copy()
+                    best_yaku = _describe_yaku(state, s, tenpai_hand=tenpai)
                     if best_score >= 6:  # 理论最大
                         path.pop()
                         state.rest[draw_tile] += 1
@@ -478,7 +534,9 @@ def search_max_score(
             score = calculate_score(initial_state)
             if score > best_score:
                 best_score = score
-                best_path = [('_initial', -1)]  # 标记初始即和
+                best_path = [('_initial', -1)]
+                best_hand = initial_state.hand.copy()
+                best_yaku = _describe_yaku(initial_state, score)
 
         # 弃 1 张 → 回到 13 张, 然后开始搜索
         candidates = _discard_candidates(initial_state)
@@ -513,6 +571,8 @@ def search_max_score(
     return SearchResult(
         max_score=best_score,
         best_path=best_path,
+        final_hand=best_hand,
+        yaku_details=best_yaku,
         nodes_searched=nodes_searched,
         nodes_pruned=nodes_pruned,
         elapsed_ms=elapsed_ms,
