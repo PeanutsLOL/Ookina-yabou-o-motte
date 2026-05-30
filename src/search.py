@@ -22,7 +22,11 @@ import time
 from .tile import NUM_TILES, tile_name
 from .state import GameState, Meld, SearchNode, SearchResult
 from .decompose import can_agari, get_waits
-from .yaku import check_kokushi, check_suuankou, check_daisangen, check_chuuren
+from .yaku import (
+    check_kokushi, check_suuankou, check_daisangen, check_chuuren,
+    check_daisuushi, check_shousuushi, check_tsuuiisou,
+    check_ryuuiisou, check_chinroutou, check_suukantsu,
+)
 from .pruning import optimistic_bonus
 
 
@@ -31,10 +35,10 @@ def calculate_score(state: GameState) -> int:
     计算当前状态下的番数（役满倍数）。
 
     仅在手牌14张（和牌形态）时调用。
-    役满累加规则:
-      - 每种役满独立判定，结果累加
-      - 国士无双 + 四暗刻 可以共存
-      - 国士无双 + 九莲宝灯 互斥
+    役满之间可累加（复合役满），按正确的互斥规则处理。
+
+    理论最大: 字一色+四杠子+四暗刻单骑+大四喜 = 6倍役满
+    役满参考: https://wiki.queji.com/mediawiki/index.php/%E5%BD%B9%E7%A8%AE%E8%A1%A8
     """
     hand = state.hand
     melds = state.melds
@@ -42,48 +46,161 @@ def calculate_score(state: GameState) -> int:
     if state.hand_size != 14:
         return 0
 
-    yakuman_score = 0
+    # ── 判定所有役满 ─────────────────────────────
+    kokushi = check_kokushi(hand)
+    suuankou = check_suuankou(hand, melds)
+    daisangen = check_daisangen(hand)       # TODO: 也检查 melds 中的三元牌
+    chuuren = check_chuuren(hand)
+    daisuushi = check_daisuushi(hand)        # TODO: 也检查 melds 中的风牌
+    shousuushi = check_shousuushi(hand)
+    tsuuiisou = check_tsuuiisou(hand)
+    ryuuiisou = check_ryuuiisou(hand)
+    chinroutou = check_chinroutou(hand)
+    suukantsu = check_suukantsu(hand, melds)
 
-    # P0 役满判定
-    kokushi_result = check_kokushi(hand)
-    suuankou_result = check_suuankou(hand, melds)
-    daisangen_result = check_daisangen(hand)
-    chuuren_result = check_chuuren(hand)
+    # ── 累加（处理互斥）─────────────────────────
+    #
+    # 核心约束: 和牌 = 4面子 + 1雀头 (或七对子/国士特殊形)
+    # 每个面子槽只能被一个役满占用。
+    #
+    # 面子槽占用:
+    #   大四喜=4个风刻(4槽)  小四喜=3风刻+1风对(3槽+雀头)
+    #   大三元=3个三元刻(3槽) 四暗刻=4暗刻(4槽,门清)
+    #   字一色=全字牌(描述牌种) 绿一色/清老头=特定牌种(描述牌种)
+    #   四杠子=4杠子(4槽)     国士/九莲=特殊形(独立结构)
+    #
+    # 互斥规则:
+    #   国士无双(特殊结构) ↔ 需要面子结构的役满 → 不可能共存
+    #   九莲宝灯(特殊结构) ↔ 需要面子结构的役满 → 不可能共存
+    #   大四喜(4槽) ↔ 大三元(3槽) → 7槽 > 4 → 不可能共存
+    #   小四喜(3槽+雀头) ↔ 大三元(3槽) → 6槽 > 4 → 不可能共存
+    #   大四喜(4槽) ↔ 小四喜(3槽+雀头) → 大四喜优先
+    #   字一色(牌种) 可与大四喜/大三元/四暗刻共存
+    #   四杠子(杠状态) 可与任何役满共存
 
-    # 累加（互斥处理）
-    if kokushi_result > 0 and chuuren_result > 0:
-        yakuman_score += max(kokushi_result, chuuren_result)
+    # 1. 国士无双 / 九莲宝灯: 特殊结构, 互斥对方也互斥其他面子系役满
+    if kokushi > 0 or chuuren > 0:
+        # 国士和九莲彼此互斥，且不能与面子系役满共存
+        return max(kokushi, chuuren)
+
+    # 2. 面子系役满: 从0开始累加
+    score = 0
+
+    # 大四喜(4风刻) vs 大三元(3三元刻) → 7刻 > 4面子槽 → 不可能共存
+    if daisuushi > 0 and daisangen > 0:
+        score += max(daisuushi, daisangen)
     else:
-        yakuman_score += kokushi_result
-        yakuman_score += chuuren_result
+        # 大四喜 ↔ 小四喜: 大四喜优先
+        if daisuushi > 0:
+            score += daisuushi
+        else:
+            score += shousuushi
+        score += daisangen
 
-    yakuman_score += suuankou_result
-    yakuman_score += daisangen_result
+    # 3. 四暗刻: 门清限定, 可与其他役满共存
+    score += suuankou
 
-    return yakuman_score
+    # 4. 牌种系役满: 字一色/绿一色/清老头（三者check函数互斥）
+    score += tsuuiisou
+    score += ryuuiisou
+    score += chinroutou
+
+    # 5. 四杠子: 杠状态, 可与任何役满共存
+    score += suukantsu
+
+    return score
 
 
-def _draw_priority(waits: List[int], rest: List[int]) -> List[int]:
+def _useful_draws(state: GameState, waits: List[int]) -> List[int]:
     """
-    摸牌优先级: 听牌 > 剩余数量多 > 幺九牌（国士候选）
+    返回"对役满有贡献"的摸牌候选，而非全部34种牌。
+
+    策略:
+      1. 若已听牌: 只摸被听牌
+      2. 否则: 分析当前手牌接近哪些役满，只摸关键牌
+         - 清老头: 1m,9m,1p,9p,1s,9s
+         - 国士无双: 所有幺九牌
+         - 字一色: 字牌
+         - 大三元/大四喜/小四喜: 三元牌/风牌
+         - 九莲宝灯: 手牌最多的花色
+         - 绿一色: 绿牌(23468s+发)
+         - 四暗刻: 手牌中已有的对子/刻子
+      3. 兜底: 如果没有任何役满潜力, 返回空列表
     """
-    from .tile import is_yaochu
+    from .tile import is_yaochu, YAOCHU_TILES, suit, SUIT_JIHAI
+    from .yaku.ryuuiisou import GREEN_TILES
 
-    def sort_key(tile: int) -> int:
-        score = 0
-        if tile in waits:
-            score += 10000
-        score += rest[tile] * 10
-        if is_yaochu(tile):
-            score += 5
-        return -score
+    hand = state.hand
 
-    candidates = [t for t in range(NUM_TILES) if rest[t] > 0]
-    candidates.sort(key=sort_key)
-    return candidates
+    # 已听牌 → 只摸被听牌
+    if waits:
+        return [t for t in waits if state.rest[t] > 0]
+
+    useful: set[int] = set()
+
+    # ── 分析役满潜力 ──────────────────────
+    # 清老头潜力: 手牌中老头牌占比
+    terminal_count = sum(hand[t] for t in (0, 8, 9, 17, 18, 26))
+    non_terminal_count = state.hand_size - terminal_count
+    # 只算数牌中的非老头 (不含字牌, 字牌不计入清老头)
+    non_terminal_numbers = sum(
+        hand[t] for t in range(27)
+        if t not in (0, 8, 9, 17, 18, 26)
+    )
+    if non_terminal_numbers <= 3 and terminal_count >= 8:
+        # 接近清老头, 只摸老头牌
+        useful.update({0, 8, 9, 17, 18, 26})
+
+    # 国士无双潜力: 幺九牌种类数
+    present_yaochu = sum(1 for t in YAOCHU_TILES if hand[t] >= 1)
+    if present_yaochu >= 8:  # 至少8种幺九才值得追
+        useful.update(YAOCHU_TILES)
+
+    # 字一色 / 风牌/三元牌 潜力
+    honor_count = sum(hand[t] for t in range(27, 34))
+    if honor_count >= 8:
+        useful.update(range(27, 34))
+
+    # 大四喜/小四喜/大三元: 风牌/三元牌 ≥ 6张
+    wind_count = sum(hand[t] for t in range(27, 31))
+    dragon_count = sum(hand[t] for t in range(31, 34))
+    if wind_count >= 6:
+        useful.update(range(27, 31))
+    if dragon_count >= 6:
+        useful.update(range(31, 34))
+
+    # 九莲宝灯潜力: 单花色 ≥ 10张
+    for base in (0, 9, 18):
+        suit_count = sum(hand[base:base+9])
+        if suit_count >= 10:
+            useful.update(range(base, base + 9))
+
+    # 绿一色潜力: 绿牌 ≥ 8张
+    green_count = sum(hand[t] for t in GREEN_TILES)
+    if green_count >= 8:
+        useful.update(GREEN_TILES)
+
+    # 四暗刻潜力: 手牌中已有的对子/刻子的牌
+    for t in range(NUM_TILES):
+        if hand[t] >= 2:
+            useful.add(t)
+
+    # ── 如果没有任何方向, 返回空 ──
+    if not useful:
+        return []
+
+    # 过滤掉已用完的牌
+    result = [t for t in useful if state.rest[t] > 0 and state.hand[t] < 4]
+
+    # 按剩余数量和幺九优先级排序
+    def sort_key(t: int) -> int:
+        return -(state.rest[t] * 10 + (5 if is_yaochu(t) else 0))
+
+    result.sort(key=sort_key)
+    return result
 
 
-def _discard_candidates(state: GameState, waits: List[int] = None) -> List[int]:
+def _discard_candidates(state: GameState, waits: Optional[List[int]] = None) -> List[int]:
     """
     弃牌候选排序: 优先弃孤立牌/非听牌。
 
@@ -206,7 +323,7 @@ def search_max_score(
         waits_before_draw = get_waits(state.hand)  # 13张时的听牌
 
         # ── 摸牌顺序 ──
-        draw_order = _draw_priority(waits_before_draw, state.rest)
+        draw_order = _useful_draws(state, waits_before_draw)
 
         for draw_tile in draw_order:
             if state.rest[draw_tile] <= 0:
@@ -342,7 +459,7 @@ def search_no_pruning(initial_state: GameState,
             return
 
         waits_before = get_waits(state.hand)
-        draw_order = _draw_priority(waits_before, state.rest)
+        draw_order = _useful_draws(state, waits_before)
 
         for draw_tile in draw_order:
             if state.rest[draw_tile] <= 0:

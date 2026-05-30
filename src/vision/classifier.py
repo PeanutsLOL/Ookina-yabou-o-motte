@@ -26,7 +26,7 @@ class TileClassifier:
     """
 
     def __init__(self, method: str = "template",
-                 template_dir: str = None):
+                 template_dir: Optional[str] = None):
         """
         Args:
             method: "template" 或 "cnn"

@@ -55,8 +55,13 @@ def preprocess_for_classification(
     else:
         gray = resized
 
-    # 归一化到 0~255
-    normalized = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
+    # 归一化到 0~255 (使用 numpy 避免 cv2.normalize 的类型重载问题)
+    gray_f = gray.astype(np.float32)
+    min_val, max_val = gray_f.min(), gray_f.max()
+    if max_val > min_val:
+        normalized = ((gray_f - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+    else:
+        normalized = gray
 
     return normalized
 

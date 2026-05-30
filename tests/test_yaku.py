@@ -1,7 +1,9 @@
 """
 役满判定模块单元测试
 
-测试国士无双、四暗刻、大三元、九莲宝灯的判定函数。
+测试所有9种役满的判定函数。
+
+参考: https://wiki.queji.com/mediawiki/index.php/%E5%BD%B9%E7%A8%AE%E8%A1%A8
 """
 
 import sys
@@ -13,6 +15,10 @@ from src.yaku.kokushi import check_kokushi
 from src.yaku.suuankou import check_suuankou
 from src.yaku.daisangen import check_daisangen
 from src.yaku.chuuren import check_chuuren
+from src.yaku.daisuushi import check_daisuushi, check_shousuushi
+from src.yaku.tsuuiisou import check_tsuuiisou
+from src.yaku.ryuuiisou import check_ryuuiisou
+from src.yaku.chinroutou import check_chinroutou
 
 
 class TestKokushi:
@@ -143,6 +149,126 @@ class TestChuuren:
         counts = parse_hand_str("123m456p789s12344z")
         result = check_chuuren(counts)
         assert result == 0
+
+
+class TestDaisuushi:
+    """大四喜/小四喜判定测试"""
+
+    def test_daisuushi(self):
+        """大四喜: 东南西北各一刻"""
+        counts = [0] * 34
+        counts[27] = 3  # 东
+        counts[28] = 3  # 南
+        counts[29] = 3  # 西
+        counts[30] = 3  # 北
+        counts[31] = 2  # 白 (雀头)
+        assert sum(counts) == 14
+        assert check_daisuushi(counts) == 2
+
+    def test_shousuushi(self):
+        """小四喜: 3刻1对"""
+        counts = [0] * 34
+        counts[27] = 3  # 东 刻
+        counts[28] = 3  # 南 刻
+        counts[29] = 3  # 西 刻
+        counts[30] = 2  # 北 对
+        counts[31] = 3  # 白 刻
+        assert sum(counts) == 14
+        assert check_shousuushi(counts) == 1
+
+    def test_not_daisuushi(self):
+        """非大四喜/小四喜"""
+        counts = parse_hand_str("123m456p789s12344z")
+        assert check_daisuushi(counts) == 0
+        assert check_shousuushi(counts) == 0
+
+
+class TestTsuuiisou:
+    """字一色判定测试"""
+
+    def test_tsuuiisou(self):
+        """字一色: 全字牌"""
+        counts = [0] * 34
+        counts[27] = 3  # 东
+        counts[28] = 3  # 南
+        counts[29] = 3  # 西
+        counts[31] = 3  # 白
+        counts[32] = 2  # 发 (雀头)
+        assert sum(counts) == 14
+        assert check_tsuuiisou(counts) == 1
+
+    def test_not_tsuuiisou(self):
+        """含数牌: 不是字一色"""
+        counts = parse_hand_str("123m456p789s12344z")
+        assert check_tsuuiisou(counts) == 0
+
+
+class TestRyuuiisou:
+    """绿一色判定测试"""
+
+    def test_ryuuiisou(self):
+        """绿一色: 全绿牌"""
+        counts = [0] * 34
+        counts[19] = 3  # 2s
+        counts[20] = 3  # 3s
+        counts[21] = 3  # 4s
+        counts[23] = 2  # 6s
+        counts[32] = 3  # 发
+        assert sum(counts) == 14
+        assert check_ryuuiisou(counts) == 1
+
+    def test_not_ryuuiisou(self):
+        """含非绿牌"""
+        counts = parse_hand_str("123m456p789s12344z")
+        assert check_ryuuiisou(counts) == 0
+
+
+class TestChinroutou:
+    """清老头判定测试"""
+
+    def test_chinroutou(self):
+        """清老头: 全老头牌(1和9)"""
+        counts = [0] * 34
+        counts[0] = 3   # 1m
+        counts[8] = 3   # 9m
+        counts[9] = 3   # 1p
+        counts[17] = 3  # 9p
+        counts[18] = 2  # 1s (雀头)
+        assert sum(counts) == 14
+        assert check_chinroutou(counts) == 1
+
+    def test_not_chinroutou(self):
+        """含中张牌: 不是清老头"""
+        counts = parse_hand_str("123m456p789s12344z")
+        assert check_chinroutou(counts) == 0
+
+
+class TestCompositeYakuman:
+    """复合役满组合测试"""
+
+    def test_daisangen_tsuuiisou(self):
+        """大三元 + 字一色 (可共存)"""
+        counts = [0] * 34
+        counts[27] = 3  # 东
+        counts[31] = 3  # 白
+        counts[32] = 3  # 发
+        counts[33] = 3  # 中
+        counts[29] = 2  # 西 (雀头)
+        assert sum(counts) == 14
+        assert check_daisangen(counts) == 1
+        assert check_tsuuiisou(counts) == 1
+
+    def test_suuankou_daisangen(self):
+        """四暗刻 + 大三元 (可共存)"""
+        counts = [0] * 34
+        counts[0] = 3   # 1m (暗刻)
+        counts[31] = 3  # 白 (暗刻)
+        counts[32] = 3  # 发 (暗刻)
+        counts[33] = 3  # 中 (暗刻)
+        counts[1] = 2   # 2m (雀头)
+        assert sum(counts) == 14
+        assert check_suuankou(counts) == 1
+        assert check_daisangen(counts) == 1
 
 
 if __name__ == "__main__":

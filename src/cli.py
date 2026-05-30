@@ -18,7 +18,7 @@ from .search import search_max_score, search_no_pruning
 
 # ── 辅助函数 ──────────────────────────────────────────
 
-def _print_tile_grid(counts: List[int], highlight: List[int] = None):
+def _print_tile_grid(counts: List[int], highlight: Optional[List[int]] = None):
     """以网格形式打印手牌，方便确认"""
     if highlight is None:
         highlight = []

@@ -152,8 +152,8 @@ class GameState:
         self.melds.append(meld)
 
     def init_rest_from_visible(self,
-                                river_counts: List[int] = None,
-                                other_melds: List[List[int]] = None) -> None:
+                                river_counts: Optional[List[int]] = None,
+                                other_melds: Optional[List[List[int]]] = None) -> None:
         """
         根据所有已见牌初始化 rest 数组。
         已见牌 = 手牌 + 副露 + 宝牌指示牌 + 牌河 + 其他家副露

@@ -7,12 +7,12 @@
 四暗刻单骑: 已有4暗刻，剩余1张单牌等做成雀头。
 """
 
-from typing import List
+from typing import List, Optional
 from ..tile import NUM_TILES, suit, SUIT_JIHAI
 from ..state import Meld
 
 
-def check_suuankou(hand_14: List[int], melds: List[Meld] = None) -> int:
+def check_suuankou(hand_14: List[int], melds: Optional[List[Meld]] = None) -> int:
     """
     检查手牌是否满足四暗刻。
 
