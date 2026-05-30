@@ -30,15 +30,19 @@ from .yaku import (
 from .pruning import optimistic_bonus
 
 
-def calculate_score(state: GameState) -> int:
+def calculate_score(state: GameState,
+                     tenpai_hand: Optional[List[int]] = None) -> int:
     """
     计算当前状态下的番数（役满倍数）。
 
     仅在手牌14张（和牌形态）时调用。
     役满之间可累加（复合役满），按正确的互斥规则处理。
 
+    Args:
+        state: 和牌状态 (14张手牌)
+        tenpai_hand: 摸牌前的13张听牌状态 (可选, 用于判定四暗刻单骑)
+
     理论最大: 字一色+四杠子+四暗刻单骑+大四喜 = 6倍役满
-    役满参考: https://wiki.queji.com/mediawiki/index.php/%E5%BD%B9%E7%A8%AE%E8%A1%A8
     """
     hand = state.hand
     melds = state.melds
@@ -48,7 +52,21 @@ def calculate_score(state: GameState) -> int:
 
     # ── 判定所有役满 ─────────────────────────────
     kokushi = check_kokushi(hand)
-    suuankou = check_suuankou(hand, melds)
+
+    # 四暗刻判定:
+    #   14张手牌 → check_suuankou 返回 1 (四暗刻) 或 0
+    #   13张听牌 → check_suuankou 返回 2 (单骑) 或 0
+    #   仅当听牌显示单骑时才升级为2倍, 否则保留14张的结果
+    suuankou_14 = check_suuankou(hand, melds)
+    if tenpai_hand is not None and suuankou_14 > 0:
+        suuankou_tanki = check_suuankou(tenpai_hand, melds)
+        if suuankou_tanki == 2:
+            suuankou = 2  # 升级为单骑
+        else:
+            suuankou = suuankou_14  # 普通四暗刻
+    else:
+        suuankou = suuankou_14
+
     daisangen = check_daisangen(hand)       # TODO: 也检查 melds 中的三元牌
     chuuren = check_chuuren(hand)
     daisuushi = check_daisuushi(hand)        # TODO: 也检查 melds 中的风牌
@@ -229,10 +247,12 @@ def _discard_candidates(state: GameState, waits: Optional[List[int]] = None) -> 
     # ── 找主导花色 ──
     suit_counts = [sum(hand[b:b+9]) for b in (0, 9, 18)]
     max_suit = max(suit_counts)
-    dominant_suit = suit_counts.index(max_suit) if max_suit >= 8 else -1
+    # 降低主导花色门槛，两花色接近时选多的
+    dominant_suit = suit_counts.index(max_suit) if max_suit >= 7 else -1
 
-    singles = []        # 孤立牌
-    minority = []       # 非主导花色的牌
+    extras = []          # 多余牌(count≥4 或 count≥3且非主导花色)
+    singles = []         # 孤立牌
+    minority = []        # 非主导花色的牌
     majority_singles = []  # 主导花色中的孤立牌(最后才弃)
     others = []
 
@@ -246,8 +266,17 @@ def _discard_candidates(state: GameState, waits: Optional[List[int]] = None) -> 
                 others.append(t)
             continue
 
-        # 未听牌: 分析每张牌
+        # 多余牌: count≥4 可以安全丢弃1张
+        if hand[t] >= 4:
+            extras.append(t)
+            continue
+
+        # 非主导花色的刻子(count=3): 也可丢弃
         s = suit(t)
+        if dominant_suit >= 0 and s != dominant_suit and s != SUIT_JIHAI and hand[t] == 3:
+            minority.insert(0, t)
+            continue
+
         n = t % 9
 
         # 检查是否孤立
@@ -268,21 +297,18 @@ def _discard_candidates(state: GameState, waits: Optional[List[int]] = None) -> 
         # 分类
         if is_isolated:
             if dominant_suit >= 0 and s != dominant_suit and s != SUIT_JIHAI:
-                # 非主导花色的孤立牌 → 最优先弃
                 singles.insert(0, t)
             elif dominant_suit >= 0 and s == dominant_suit:
-                # 主导花色的孤立牌 → 最后才弃
                 majority_singles.append(t)
             else:
                 singles.append(t)
         elif dominant_suit >= 0 and s != dominant_suit and s != SUIT_JIHAI:
-            # 非主导花色的非孤立牌(如刻子/对子) → 也应优先弃
             minority.append(t)
         else:
             others.append(t)
 
-    # 最终顺序: 非目标花色孤立牌 → 非目标花色 → 其他孤立牌 → 其他 → 主导花色孤立牌
-    candidates = singles + minority + majority_singles + others
+    # 最终顺序: 多余牌 → 非目标花色孤立牌 → 非目标花色 → 其他孤立牌 → 其他 → 主导花色孤立
+    candidates = extras + singles + minority + majority_singles + others
 
     if len(candidates) > 6:
         candidates = candidates[:6]
@@ -363,7 +389,10 @@ def search_max_score(
 
             # ——— 和牌检查 ———
             if can_agari(state.hand):
-                s = calculate_score(state)
+                # 构造13张听牌状态(摸牌前) → 用于判定四暗刻单骑
+                tenpai = state.hand.copy()
+                tenpai[draw_tile] -= 1
+                s = calculate_score(state, tenpai_hand=tenpai)
                 if s > best_score:
                     best_score = s
                     best_path = path.copy()

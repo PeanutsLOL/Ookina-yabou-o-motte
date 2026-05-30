@@ -127,6 +127,17 @@ class TestCalculateScore:
         assert result.max_score >= 1, f"应找到九莲宝灯, got {result.max_score}"
         assert result.elapsed_ms < 5000
 
+    def test_case_6_chinroutou_suuankou_tanki(self):
+        """用例6: 1119999m111199p → 清老头+四暗刻单骑=3倍"""
+        state = build_state("1119999m111199p")
+        assert state.hand_size == 13
+        result = search_max_score(state, max_depth=5, enable_pruning=True)
+        assert result.max_score >= 3, (
+            f"应找到清老头+四暗刻单骑=3倍, got {result.max_score}\n"
+            f"path: {result.best_path}"
+        )
+        assert result.elapsed_ms < 5000
+
 
 if __name__ == "__main__":
     import pytest
