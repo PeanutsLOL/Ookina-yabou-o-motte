@@ -294,12 +294,9 @@ def search_max_score(
     best_path: List[Tuple[str, int]] = []
     nodes_searched = 0
     nodes_pruned = 0
+    visited: dict = {}  # (hand_tuple, depth) → avoid re-search
 
     start_time = time.perf_counter()
-
-    # ── 内部递归函数 ───────────────────────────────
-    # state 约定: 传入时 hand_size = 13（标准状态）
-    # 函数内部: draw → 14 → check agari → discard → 13 → recurse
 
     def search(state: GameState, depth: int,
                path: List[Tuple[str, int]]):
@@ -307,89 +304,87 @@ def search_max_score(
 
         nodes_searched += 1
 
-        # ── 深度限制 ──
         if depth >= max_depth:
             return
 
-        # ── 剪枝检查 ──
+        # ── 状态缓存: 同样手牌+深度只搜一次 ──
+        hand_key = tuple(state.hand)
+        cache_key = (hand_key, depth)
+        if cache_key in visited:
+            nodes_pruned += 1
+            return
+        visited[cache_key] = True
+
+        # ── 剪枝 (修正: 比较乐观上限 vs 当前最优) ──
         remaining_draws = max_depth - depth
-        if enable_pruning:
-            upper_bound = best_score + optimistic_bonus(state, remaining_draws)
-            if upper_bound <= best_score and best_score > 0:
+        if enable_pruning and best_score > 0:
+            max_bonus = optimistic_bonus(state, remaining_draws)
+            if max_bonus <= best_score:
                 nodes_pruned += 1
                 return
 
-        # ── 听牌列表（摸牌前计算，用于优先摸听牌）──
-        waits_before_draw = get_waits(state.hand)  # 13张时的听牌
-
-        # ── 摸牌顺序 ──
-        draw_order = _useful_draws(state, waits_before_draw)
+        waits_before = get_waits(state.hand)
+        draw_order = _useful_draws(state, waits_before)
 
         for draw_tile in draw_order:
-            if state.rest[draw_tile] <= 0:
+            if state.rest[draw_tile] <= 0 or state.hand[draw_tile] >= 4:
                 continue
-            if state.hand[draw_tile] >= 4:
+            if waits_before and draw_tile not in waits_before:
                 continue
-
-            # 如果已听牌且非听牌 → 跳过（除非剩余摸牌>1）
-            if waits_before_draw and draw_tile not in waits_before_draw:
-                if remaining_draws <= 1:
-                    continue  # 只有1次摸牌机会，摸非听牌无意义
 
             # ——— 摸牌 ———
-            state.hand[draw_tile] += 1   # 13 → 14
+            state.hand[draw_tile] += 1
             state.rest[draw_tile] -= 1
             path.append(('draw', draw_tile))
 
             # ——— 和牌检查 ———
             if can_agari(state.hand):
-                current_score = calculate_score(state)
-                if current_score > best_score:
-                    best_score = current_score
+                s = calculate_score(state)
+                if s > best_score:
+                    best_score = s
                     best_path = path.copy()
+                    if best_score >= 6:  # 理论最大
+                        path.pop()
+                        state.rest[draw_tile] += 1
+                        state.hand[draw_tile] -= 1
+                        return
 
-            # ——— 弃牌 → 递归（继续搜索下一巡）———
+            # ——— 弃牌 → 递归 ———
             if depth + 1 < max_depth:
-                # 找到和牌后: 仅当乐观估计能超过当前最优时才继续
                 if best_score > 0:
-                    opt = optimistic_bonus(state, remaining_draws - 1)
-                    if best_score + opt <= best_score:
-                        # 无法改善，跳过弃牌循环
+                    if optimistic_bonus(state, remaining_draws - 1) <= best_score:
                         path.pop()
                         state.rest[draw_tile] += 1
                         state.hand[draw_tile] -= 1
                         continue
 
-                # 14张时的听牌列表（用于确定安全弃牌）
-                waits_after_draw = get_waits(state.hand)
-                discards = _discard_candidates(state, waits_after_draw)
+                discards = _discard_candidates(state, get_waits(state.hand))[:4]
 
                 for discard_tile in discards:
                     if state.hand[discard_tile] <= 0:
                         continue
 
-                    # 快速评估: 弃牌后的状态是否有潜力
+                    # 避免无意义循环: 刚摸的牌立刻弃 (且原本只有1张)
+                    if discard_tile == draw_tile and hand_key[discard_tile] <= 1:
+                        continue
+
                     if best_score > 0 and enable_pruning:
                         state.hand[discard_tile] -= 1
-                        opt_after = optimistic_bonus(state, max_depth - depth - 1)
+                        pot = optimistic_bonus(state, max_depth - depth - 1)
                         state.hand[discard_tile] += 1
-                        if opt_after <= 0:
-                            continue  # 弃这张牌后无役满潜力，跳过
+                        if pot <= 0:
+                            continue
 
-                    # 弃牌
-                    state.hand[discard_tile] -= 1  # 14 → 13
+                    state.hand[discard_tile] -= 1
                     state.rest[discard_tile] += 1
                     path.append(('discard', discard_tile))
 
-                    # 递归进入下一巡
                     search(state, depth + 1, path)
 
-                    # 回溯弃牌
                     path.pop()
                     state.rest[discard_tile] -= 1
                     state.hand[discard_tile] += 1
 
-            # ——— 回溯摸牌 ———
             path.pop()
             state.rest[draw_tile] += 1
             state.hand[draw_tile] -= 1
