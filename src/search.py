@@ -388,7 +388,7 @@ def _gen_melds(state: GameState) -> list:
 
 
 def _describe_yaku(state: GameState, score: int,
-                    tenpai_hand: List[int] = None) -> List[str]:
+                    tenpai_hand: Optional[List[int]] = None) -> List[str]:
     """生成役种明细文字列表"""
     details = []
     hand = state.hand

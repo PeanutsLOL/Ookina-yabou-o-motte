@@ -190,7 +190,7 @@ def check_chiitoitsu(hand: List[int]) -> int:
 
 
 def calculate_dora(hand: List[int], dora_indicators: List[int],
-                   ura_indicators: List[int] = None) -> int:
+                   ura_indicators: Optional[List[int]] = None) -> int:
     """
     计算宝牌数。
     每张宝牌指示牌对应一种宝牌，手牌中每张宝牌=+1翻。

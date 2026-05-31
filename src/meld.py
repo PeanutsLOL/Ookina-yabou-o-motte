@@ -2,7 +2,6 @@
 鸣牌动作生成模块
 
 生成合法的鸣牌动作（碰、杠、吃、暗杠）。
-注意: 吃只能从上一家鸣（实际雀魂中），简化考虑从任意家。
 """
 
 from typing import List, Optional
@@ -10,8 +9,9 @@ from .tile import NUM_TILES, suit, SUIT_JIHAI
 from .state import Meld
 
 
-def generate_pon(hand: List[int], called_tile: int,
-                  from_player: int = 1) -> Optional[Meld]:
+def generate_pon(
+    hand: List[int], called_tile: int, from_player: int = 1
+) -> Optional[Meld]:
     """
     生成碰的动作。
 
@@ -29,7 +29,7 @@ def generate_pon(hand: List[int], called_tile: int,
             tiles=[called_tile, called_tile, called_tile],
             from_player=from_player,
             called_tile=called_tile,
-            is_open=True
+            is_open=True,
         )
     return None
 
@@ -48,13 +48,14 @@ def generate_kan_from_hand(hand: List[int], tile: int) -> Optional[Meld]:
             tiles=[tile, tile, tile, tile],
             from_player=0,
             called_tile=None,
-            is_open=False
+            is_open=False,
         )
     return None
 
 
-def generate_kan_from_pon(hand: List[int], tile: int,
-                           existing_melds: List[Meld]) -> Optional[Meld]:
+def generate_kan_from_pon(
+    hand: List[int], tile: int, existing_melds: List[Meld]
+) -> Optional[Meld]:
     """
     生成加杠: 手中已有碰(tile的pon副露)，又摸到一张同牌。
 
@@ -64,23 +65,21 @@ def generate_kan_from_pon(hand: List[int], tile: int,
         existing_melds: 已有的副露列表
     """
     # 检查是否已有此牌的碰
-    has_pon = any(
-        m.meld_type == "pon" and m.tiles[0] == tile
-        for m in existing_melds
-    )
+    has_pon = any(m.meld_type == "pon" and m.tiles[0] == tile for m in existing_melds)
     if has_pon and hand[tile] >= 1:
         return Meld(
             meld_type="kakan",
             tiles=[tile, tile, tile, tile],
             from_player=0,
             called_tile=tile,
-            is_open=True
+            is_open=True,
         )
     return None
 
 
-def generate_daiminkan(hand: List[int], called_tile: int,
-                        from_player: int = 1) -> Optional[Meld]:
+def generate_daiminkan(
+    hand: List[int], called_tile: int, from_player: int = 1
+) -> Optional[Meld]:
     """
     生成大明杠: 手中有3张同牌，其他家打出第4张。
     """
@@ -90,13 +89,12 @@ def generate_daiminkan(hand: List[int], called_tile: int,
             tiles=[called_tile, called_tile, called_tile, called_tile],
             from_player=from_player,
             called_tile=called_tile,
-            is_open=True
+            is_open=True,
         )
     return None
 
 
-def generate_chi(hand: List[int], called_tile: int,
-                  from_player: int = 3) -> List[Meld]:
+def generate_chi(hand: List[int], called_tile: int, from_player: int = 3) -> List[Meld]:
     """
     生成吃牌动作列表。
 
@@ -106,11 +104,15 @@ def generate_chi(hand: List[int], called_tile: int,
     Args:
         hand: 手牌计数
         called_tile: 上家打出的牌
-        from_player: 默认3=上家
+        from_player: 打出此牌的玩家 (1=下家,2=对家,3=上家)
 
     Returns:
-        所有合法吃的 Meld 列表
+        所有合法吃的 Meld 列表（非上家时返回空）
     """
+    # 吃只能从上家
+    if from_player != 3:
+        return []
+
     results = []
     s = suit(called_tile)
     if s == SUIT_JIHAI:
@@ -126,42 +128,48 @@ def generate_chi(hand: List[int], called_tile: int,
     # 位置1
     if n <= 6:
         if hand[called_tile + 1] >= 1 and hand[called_tile + 2] >= 1:
-            results.append(Meld(
-                meld_type="chi",
-                tiles=[called_tile, called_tile + 1, called_tile + 2],
-                from_player=from_player,
-                called_tile=called_tile,
-                is_open=True
-            ))
+            results.append(
+                Meld(
+                    meld_type="chi",
+                    tiles=[called_tile, called_tile + 1, called_tile + 2],
+                    from_player=from_player,
+                    called_tile=called_tile,
+                    is_open=True,
+                )
+            )
 
     # 位置2
     if 1 <= n <= 7:
         if hand[called_tile - 1] >= 1 and hand[called_tile + 1] >= 1:
-            results.append(Meld(
-                meld_type="chi",
-                tiles=[called_tile - 1, called_tile, called_tile + 1],
-                from_player=from_player,
-                called_tile=called_tile,
-                is_open=True
-            ))
+            results.append(
+                Meld(
+                    meld_type="chi",
+                    tiles=[called_tile - 1, called_tile, called_tile + 1],
+                    from_player=from_player,
+                    called_tile=called_tile,
+                    is_open=True,
+                )
+            )
 
     # 位置3
     if n >= 2:
         if hand[called_tile - 2] >= 1 and hand[called_tile - 1] >= 1:
-            results.append(Meld(
-                meld_type="chi",
-                tiles=[called_tile - 2, called_tile - 1, called_tile],
-                from_player=from_player,
-                called_tile=called_tile,
-                is_open=True
-            ))
+            results.append(
+                Meld(
+                    meld_type="chi",
+                    tiles=[called_tile - 2, called_tile - 1, called_tile],
+                    from_player=from_player,
+                    called_tile=called_tile,
+                    is_open=True,
+                )
+            )
 
     return results
 
 
-def generate_all_melds(hand: List[int], called_tile: int,
-                        from_player: int,
-                        existing_melds: List[Meld]) -> List[Meld]:
+def generate_all_melds(
+    hand: List[int], called_tile: int, from_player: int, existing_melds: List[Meld]
+) -> List[Meld]:
     """
     生成所有合法鸣牌动作。
 
@@ -186,8 +194,7 @@ def generate_all_melds(hand: List[int], called_tile: int,
     if kan:
         results.append(kan)
 
-    # 吃 (仅上家)
-    if from_player == 3:
-        results.extend(generate_chi(hand, called_tile, from_player))
+    # 吃 (generate_chi 内部校验仅上家)
+    results.extend(generate_chi(hand, called_tile, from_player))
 
     return results
