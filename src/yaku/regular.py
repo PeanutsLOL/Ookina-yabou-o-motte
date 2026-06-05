@@ -23,15 +23,13 @@ def _has_valid_mentsu_decomp(hand: List[int]) -> bool:
 def _count_sequences(hand: List[int]) -> List[tuple]:
     """
     尝试对14张手牌做面子拆分，返回顺子列表。
-    仅用于役种判定，取第一个合法拆分。
+    仅用于役种判定，取第一个合法拆分（使用 early-exit 版本）。
     """
-    # 使用 decompose_hand 获取一个拆分
-    from ..decompose import decompose_hand
-    results = decompose_hand(hand)
-    if not results:
+    from ..decompose import decompose_hand_first
+    result = decompose_hand_first(hand)
+    if not result:
         return []
-    # 取第一个拆分方案
-    return [m for m in results[0] if m[0] == 'shuntsu']
+    return [m for m in result if m[0] == 'shuntsu']
 
 
 def check_pinfu(hand: List[int], pair_tile: int,
@@ -94,7 +92,8 @@ def check_ryanpeikou(hand: List[int]) -> int:
     from ..decompose import check_seven_pairs
     if check_seven_pairs(hand):
         # 七对子中是否有完全相同的顺子型对子?
-        # 简化: 如果是7对子且每个对子都有相邻对子构成顺子，算二杯口
+        # 高点法：如果是7对子且每个对子都有相邻对子构成顺子，算二杯口
+        # 示例：112233445566p 11z 同时满足七对子（2番）和二杯口（3番），按3番计算。
         pairs = [t for t in range(NUM_TILES) if hand[t] == 2]
         if len(pairs) == 7:
             seq_pairs = 0
@@ -110,34 +109,34 @@ def check_ryanpeikou(hand: List[int]) -> int:
     return 0
 
 
-def check_ittsuu(hand: List[int]) -> int:
+def check_ittsuu(hand: List[int], is_menzen: bool = True) -> int:
     """
     一气通贯: 同花色的123+456+789三组顺子。
-    门清2翻, 副露1翻(简化返回2)。
+    门清2翻, 副露1翻。
     """
     for base in (0, 9, 18):
         if (hand[base] >= 1 and hand[base+1] >= 1 and hand[base+2] >= 1 and
             hand[base+3] >= 1 and hand[base+4] >= 1 and hand[base+5] >= 1 and
             hand[base+6] >= 1 and hand[base+7] >= 1 and hand[base+8] >= 1):
-            return 2
+            return 2 if is_menzen else 1
     return 0
 
 
-def check_sanshoku(hand: List[int]) -> int:
+def check_sanshoku(hand: List[int], is_menzen: bool = True) -> int:
     """
     三色同顺: 万筒索各一组相同数字的顺子。
-    门清2翻, 副露1翻(简化返回2)。
+    门清2翻, 副露1翻。
     """
     for n in range(7):  # 1~7
         if (hand[n] >= 1 and hand[n+1] >= 1 and hand[n+2] >= 1 and
             hand[n+9] >= 1 and hand[n+10] >= 1 and hand[n+11] >= 1 and
             hand[n+18] >= 1 and hand[n+19] >= 1 and hand[n+20] >= 1):
-            return 2
+            return 2 if is_menzen else 1
     return 0
 
 
-def check_chinitsu(hand: List[int]) -> int:
-    """清一色: 所有牌同花色。门清6翻, 副露5翻(简化返回6)。"""
+def check_chinitsu(hand: List[int], is_menzen: bool = True) -> int:
+    """清一色: 所有牌同花色。门清6翻, 副露5翻。"""
     dominant = -1
     for t in range(NUM_TILES):
         if hand[t] > 0:
@@ -148,11 +147,13 @@ def check_chinitsu(hand: List[int]) -> int:
                 dominant = s
             elif s != dominant:
                 return 0
-    return 6 if dominant >= 0 else 0
+    if dominant >= 0:
+        return 6 if is_menzen else 5
+    return 0
 
 
-def check_honitsu(hand: List[int]) -> int:
-    """混一色: 同花色数牌+字牌。门清3翻, 副露2翻(简化返回3)。"""
+def check_honitsu(hand: List[int], is_menzen: bool = True) -> int:
+    """混一色: 同花色数牌+字牌。门清3翻, 副露2翻。"""
     num_suit = -1
     for t in range(NUM_TILES):
         if hand[t] > 0:
@@ -162,7 +163,9 @@ def check_honitsu(hand: List[int]) -> int:
                     num_suit = s
                 elif s != num_suit:
                     return 0
-    return 3 if num_suit >= 0 else 0
+    if num_suit >= 0:
+        return 3 if is_menzen else 2
+    return 0
 
 
 def check_toitoi(hand: List[int]) -> int:
@@ -225,15 +228,15 @@ def calculate_regular_han(state: GameState) -> int:
     is_menzen = state.is_menzen
 
     # ── 牌种系 ──
-    chinitsu = check_chinitsu(hand)
+    chinitsu = check_chinitsu(hand, is_menzen)
     if chinitsu > 0:
         total += chinitsu
     else:
-        total += check_honitsu(hand)
+        total += check_honitsu(hand, is_menzen)
 
     # ── 顺子系 ──
-    total += check_ittsuu(hand)
-    total += check_sanshoku(hand)
+    total += check_ittsuu(hand, is_menzen)
+    total += check_sanshoku(hand, is_menzen)
 
     # ── 二杯口(高于一杯口) ──
     rpk = check_ryanpeikou(hand)
@@ -247,6 +250,11 @@ def calculate_regular_han(state: GameState) -> int:
     if tt > 0:
         total += tt
     total += check_sanankou(hand)
+
+    # ── 小三元 (2翻) ──
+    from .daisangen import check_shousangen
+    if check_shousangen(hand, state.melds):
+        total += 2
 
     # ── 七对子 ──
     total += check_chiitoitsu(hand)
@@ -312,7 +320,8 @@ def has_any_yaku(state: GameState) -> bool:
         if check_seven_pairs(hand):
             return True
 
-    # 门清自摸 或 立直 (至少1翻)
+    # 门清自摸 (1翻): 搜索中所有和牌均为自摸, 门清时至少有门清自摸1翻。
+    # 注意: 此假设仅适用于搜索上下文(自摸和). 若用于荣和判定需改为 False.
     if state.is_menzen:
         return True  # 门清自摸=1翻
 

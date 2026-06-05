@@ -8,7 +8,7 @@
 """
 
 from typing import List, Optional
-from ..tile import NUM_TILES, suit, SUIT_JIHAI
+from ..tile import NUM_TILES
 from ..state import Meld
 
 

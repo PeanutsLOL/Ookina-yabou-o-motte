@@ -208,6 +208,80 @@ def decompose_hand(counts_14: List[int]) -> List[List[Tuple[str, List[int]]]]:
     return results
 
 
+def decompose_hand_first(
+    counts_14: List[int]
+) -> Optional[List[Tuple[str, List[int]]]]:
+    """
+    返回第一个合法拆分方案（找到即返回，不枚举全部）。
+
+    与 decompose_hand() 结果格式相同，但仅返回一个方案或 None。
+    用于只需要任意一个合法拆分的场景（如普通役种判定），
+    避免多面听手牌的全量枚举开销。
+    """
+    result: List[Optional[List[Tuple[str, List[int]]]]] = [None]
+
+    def dfs(remaining: List[int], split: List[Tuple[str, List[int]]],
+            janto_found: bool):
+        if result[0] is not None:
+            return  # 已找到, 提前退出
+
+        if all(c == 0 for c in remaining):
+            if janto_found:
+                result[0] = split.copy()
+            return
+
+        first = -1
+        for i in range(NUM_TILES):
+            if remaining[i] > 0:
+                first = i
+                break
+        if first == -1:
+            return
+
+        s = suit(first)
+        n = first % 9
+
+        # 尝试刻子
+        if remaining[first] >= 3:
+            remaining[first] -= 3
+            split.append(('kotsu', [first, first, first]))
+            dfs(remaining, split, janto_found)
+            if result[0] is not None:
+                return
+            split.pop()
+            remaining[first] += 3
+
+        # 尝试顺子
+        if s != SUIT_JIHAI and n <= 6:
+            if (remaining[first] >= 1 and
+                    remaining[first + 1] >= 1 and
+                    remaining[first + 2] >= 1):
+                remaining[first] -= 1
+                remaining[first + 1] -= 1
+                remaining[first + 2] -= 1
+                split.append(('shuntsu', [first, first + 1, first + 2]))
+                dfs(remaining, split, janto_found)
+                if result[0] is not None:
+                    return
+                split.pop()
+                remaining[first] += 1
+                remaining[first + 1] += 1
+                remaining[first + 2] += 1
+
+        # 尝试雀头
+        if not janto_found and remaining[first] >= 2:
+            remaining[first] -= 2
+            split.append(('toitsu', [first, first]))
+            dfs(remaining, split, True)
+            if result[0] is not None:
+                return
+            split.pop()
+            remaining[first] += 2
+
+    dfs(counts_14.copy(), [], False)
+    return result[0]
+
+
 def count_shanten(counts_13: List[int]) -> int:
     """
     计算向听数（距离听牌还差几步）。

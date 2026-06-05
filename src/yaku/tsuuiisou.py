@@ -5,10 +5,7 @@
 """
 
 from typing import List
-from ..tile import NUM_TILES, suit, SUIT_JIHAI
-
-
-HONOR_TILES = list(range(27, 34))  # 27~33
+from ..tile import NUM_TILES, HONOR_TILES
 
 
 def check_tsuuiisou(hand_14: List[int]) -> int:

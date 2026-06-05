@@ -5,14 +5,13 @@
 """
 
 import sys
-import os
 from typing import List, Optional
 
 from .tile import (
     NUM_TILES, tile_name, parse_hand_str, counts_to_str,
     hand_to_list, dora_indicator_to_dora
 )
-from .state import GameState, Meld
+from .state import GameState
 from .search import search_max_score, search_no_pruning
 
 

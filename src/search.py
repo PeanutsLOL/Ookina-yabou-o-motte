@@ -20,7 +20,7 @@ from typing import List, Tuple, Optional
 import time
 
 from .tile import NUM_TILES, tile_name
-from .state import GameState, Meld, SearchNode, SearchResult
+from .state import GameState, Meld, SearchResult
 from .decompose import can_agari, get_waits
 from .yaku import (
     check_kokushi, check_suuankou, check_daisangen, check_chuuren,
@@ -28,10 +28,43 @@ from .yaku import (
     check_ryuuiisou, check_chinroutou, check_suukantsu,
 )
 from .pruning import optimistic_bonus
+from .meld import generate_all_melds_from_wall
+
+
+def _check_yakuman_all(hand: List[int], melds: List[Meld],
+                       tenpai_hand: Optional[List[int]] = None) -> dict:
+    """
+    一次性判定所有役满，返回结果字典。
+
+    供 calculate_score() 和 _describe_yaku() 共用，
+    避免重复调用 10 个 check 函数。
+    """
+    kokushi = check_kokushi(hand)
+
+    suuankou_14 = check_suuankou(hand, melds)
+    if tenpai_hand is not None and suuankou_14 > 0:
+        suuankou_tanki = check_suuankou(tenpai_hand, melds)
+        suuankou = 2 if suuankou_tanki == 2 else suuankou_14
+    else:
+        suuankou = suuankou_14
+
+    return {
+        'kokushi': kokushi,
+        'suuankou': suuankou,
+        'daisangen': check_daisangen(hand, melds),
+        'chuuren': check_chuuren(hand),
+        'daisuushi': check_daisuushi(hand, melds),
+        'shousuushi': check_shousuushi(hand, melds),
+        'tsuuiisou': check_tsuuiisou(hand),
+        'ryuuiisou': check_ryuuiisou(hand),
+        'chinroutou': check_chinroutou(hand),
+        'suukantsu': check_suukantsu(hand, melds),
+    }
 
 
 def calculate_score(state: GameState,
-                     tenpai_hand: Optional[List[int]] = None) -> int:
+                     tenpai_hand: Optional[List[int]] = None,
+                     yaku_results: Optional[dict] = None) -> int:
     """
     计算当前状态下的番数（役满倍数）。
 
@@ -41,6 +74,7 @@ def calculate_score(state: GameState,
     Args:
         state: 和牌状态 (14张手牌)
         tenpai_hand: 摸牌前的13张听牌状态 (可选, 用于判定四暗刻单骑)
+        yaku_results: 可选, 预计算的役满判定结果 (与 _describe_yaku 共用)
 
     理论最大: 字一色+四杠子+四暗刻单骑+大四喜 = 6倍役满
     """
@@ -50,55 +84,24 @@ def calculate_score(state: GameState,
     if state.hand_size != 14:
         return 0
 
-    # ── 判定所有役满 ─────────────────────────────
-    kokushi = check_kokushi(hand)
+    if yaku_results is None:
+        yaku_results = _check_yakuman_all(hand, melds, tenpai_hand)
 
-    # 四暗刻判定:
-    #   14张手牌 → check_suuankou 返回 1 (四暗刻) 或 0
-    #   13张听牌 → check_suuankou 返回 2 (单骑) 或 0
-    #   仅当听牌显示单骑时才升级为2倍, 否则保留14张的结果
-    suuankou_14 = check_suuankou(hand, melds)
-    if tenpai_hand is not None and suuankou_14 > 0:
-        suuankou_tanki = check_suuankou(tenpai_hand, melds)
-        if suuankou_tanki == 2:
-            suuankou = 2  # 升级为单骑
-        else:
-            suuankou = suuankou_14  # 普通四暗刻
-    else:
-        suuankou = suuankou_14
-
-    daisangen = check_daisangen(hand)       # TODO: 也检查 melds 中的三元牌
-    chuuren = check_chuuren(hand)
-    daisuushi = check_daisuushi(hand)        # TODO: 也检查 melds 中的风牌
-    shousuushi = check_shousuushi(hand)
-    tsuuiisou = check_tsuuiisou(hand)
-    ryuuiisou = check_ryuuiisou(hand)
-    chinroutou = check_chinroutou(hand)
-    suukantsu = check_suukantsu(hand, melds)
+    kokushi = yaku_results['kokushi']
+    chuuren = yaku_results['chuuren']
+    daisuushi = yaku_results['daisuushi']
+    daisangen = yaku_results['daisangen']
+    shousuushi = yaku_results['shousuushi']
+    suuankou = yaku_results['suuankou']
+    tsuuiisou = yaku_results['tsuuiisou']
+    ryuuiisou = yaku_results['ryuuiisou']
+    chinroutou = yaku_results['chinroutou']
+    suukantsu = yaku_results['suukantsu']
 
     # ── 累加（处理互斥）─────────────────────────
-    #
-    # 核心约束: 和牌 = 4面子 + 1雀头 (或七对子/国士特殊形)
-    # 每个面子槽只能被一个役满占用。
-    #
-    # 面子槽占用:
-    #   大四喜=4个风刻(4槽)  小四喜=3风刻+1风对(3槽+雀头)
-    #   大三元=3个三元刻(3槽) 四暗刻=4暗刻(4槽,门清)
-    #   字一色=全字牌(描述牌种) 绿一色/清老头=特定牌种(描述牌种)
-    #   四杠子=4杠子(4槽)     国士/九莲=特殊形(独立结构)
-    #
-    # 互斥规则:
-    #   国士无双(特殊结构) ↔ 需要面子结构的役满 → 不可能共存
-    #   九莲宝灯(特殊结构) ↔ 需要面子结构的役满 → 不可能共存
-    #   大四喜(4槽) ↔ 大三元(3槽) → 7槽 > 4 → 不可能共存
-    #   小四喜(3槽+雀头) ↔ 大三元(3槽) → 6槽 > 4 → 不可能共存
-    #   大四喜(4槽) ↔ 小四喜(3槽+雀头) → 大四喜优先
-    #   字一色(牌种) 可与大四喜/大三元/四暗刻共存
-    #   四杠子(杠状态) 可与任何役满共存
 
     # 1. 国士无双 / 九莲宝灯: 特殊结构, 互斥对方也互斥其他面子系役满
     if kokushi > 0 or chuuren > 0:
-        # 国士和九莲彼此互斥，且不能与面子系役满共存
         return max(kokushi, chuuren)
 
     # 2. 面子系役满: 从0开始累加
@@ -108,17 +111,16 @@ def calculate_score(state: GameState,
     if daisuushi > 0 and daisangen > 0:
         score += max(daisuushi, daisangen)
     else:
-        # 大四喜 ↔ 小四喜: 大四喜优先
         if daisuushi > 0:
             score += daisuushi
         else:
-            score += shousuushi
+            score += shousuushi  # 大四喜 ↔ 小四喜: 大四喜优先
         score += daisangen
 
     # 3. 四暗刻: 门清限定, 可与其他役满共存
     score += suuankou
 
-    # 4. 牌种系役满: 字一色/绿一色/清老头（三者check函数互斥）
+    # 4. 牌种系役满: 字一色/绿一色/清老头
     score += tsuuiisou
     score += ryuuiisou
     score += chinroutou
@@ -131,7 +133,7 @@ def calculate_score(state: GameState,
         from .yaku.regular import calculate_regular_han
         regular_han = calculate_regular_han(state)
         if regular_han >= 13:
-            score = 1  # 累计役满=1倍役满
+            score = 1
 
     return score
 
@@ -346,69 +348,26 @@ def _discard_candidates(state: GameState, waits: Optional[List[int]] = None) -> 
     return candidates
 
 
-def _gen_melds(state: GameState) -> list:
-    """
-    快模式: 生成可行的鸣牌动作 (碰/吃/明杠)。
-
-    返回: [(meld_type, called_tile, [hand_tiles]), ...]
-    """
-    from .tile import suit, SUIT_JIHAI
-
-    hand = state.hand
-    rest = state.rest
-    actions = []
-
-    # ── 碰: 手中有≥2张, 剩余牌山中≥1张 ──
-    for t in range(NUM_TILES):
-        if hand[t] >= 2 and rest[t] >= 1:
-            actions.append(('pon', t, [t, t]))
-
-    # ── 吃: 手中有2张可组成顺子, 剩余牌山中有衔接牌 ──
-    for t in range(NUM_TILES):
-        if rest[t] <= 0:
-            continue
-        s = suit(t)
-        if s == SUIT_JIHAI:
-            continue
-        n = t % 9
-
-        # 吃法1: t做第一张, 需要 hand[t+1]>=1 and hand[t+2]>=1
-        if n <= 6 and hand[t+1] >= 1 and hand[t+2] >= 1:
-            actions.append(('chi', t, [t+1, t+2]))
-        # 吃法2: t做第二张, 需要 hand[t-1]>=1 and hand[t+1]>=1
-        if 1 <= n <= 7 and hand[t-1] >= 1 and hand[t+1] >= 1:
-            actions.append(('chi', t, [t-1, t+1]))
-        # 吃法3: t做第三张, 需要 hand[t-2]>=1 and hand[t-1]>=1
-        if n >= 2 and hand[t-2] >= 1 and hand[t-1] >= 1:
-            actions.append(('chi', t, [t-2, t-1]))
-
-    # 优先碰(完成刻子比顺子快)
-    actions.sort(key=lambda a: 0 if a[0] == 'pon' else 1)
-    return actions
-
-
 def _describe_yaku(state: GameState, score: int,
-                    tenpai_hand: Optional[List[int]] = None) -> List[str]:
+                    tenpai_hand: Optional[List[int]] = None,
+                    yaku_results: Optional[dict] = None) -> List[str]:
     """生成役种明细文字列表"""
     details = []
     hand = state.hand
 
-    kokushi = check_kokushi(hand)
-    suuankou = check_suuankou(hand, state.melds)
-    daisangen = check_daisangen(hand)
-    chuuren = check_chuuren(hand)
-    daisuushi = check_daisuushi(hand)
-    shousuushi = check_shousuushi(hand)
-    tsuuiisou = check_tsuuiisou(hand)
-    ryuuiisou = check_ryuuiisou(hand)
-    chinroutou = check_chinroutou(hand)
-    suukantsu = check_suukantsu(hand, state.melds)
+    if yaku_results is None:
+        yaku_results = _check_yakuman_all(hand, state.melds, tenpai_hand)
 
-    # 四暗刻单骑判定
-    if tenpai_hand and suuankou > 0:
-        tanki = check_suuankou(tenpai_hand, state.melds)
-        if tanki == 2:
-            suuankou = 2
+    kokushi = yaku_results['kokushi']
+    suuankou = yaku_results['suuankou']
+    daisangen = yaku_results['daisangen']
+    chuuren = yaku_results['chuuren']
+    daisuushi = yaku_results['daisuushi']
+    shousuushi = yaku_results['shousuushi']
+    tsuuiisou = yaku_results['tsuuiisou']
+    ryuuiisou = yaku_results['ryuuiisou']
+    chinroutou = yaku_results['chinroutou']
+    suukantsu = yaku_results['suukantsu']
 
     if kokushi >= 2: details.append("国士无双十三面 (双倍役满)")
     elif kokushi == 1: details.append("国士无双 (役满)")
@@ -558,12 +517,13 @@ def search_max_score(
                     if target_size == 14:  # max模式不处理鸣牌
                         tenpai = state.hand.copy()
                         tenpai[draw_tile] -= 1
-                        s = calculate_score(state, tenpai_hand=tenpai)
+                        yakus = _check_yakuman_all(state.hand, state.melds, tenpai)
+                        s = calculate_score(state, tenpai_hand=tenpai, yaku_results=yakus)
                         if s > best_score:
                             best_score = s
                             best_path = path.copy()
                             best_hand = state.hand.copy()
-                            best_yaku = _describe_yaku(state, s, tenpai_hand=tenpai)
+                            best_yaku = _describe_yaku(state, s, tenpai_hand=tenpai, yaku_results=yakus)
                             if best_score >= 6:
                                 path.pop()
                                 state.rest[draw_tile] += 1
@@ -572,14 +532,18 @@ def search_max_score(
 
             # ——— 弃牌/鸣牌 → 递归 ———
             if depth + 1 < max_depth and not found:
+                # ── max模式: 摸牌后剪枝（复用节点顶部的逻辑）──
+                postdraw_optimistic = None
                 if mode == "max" and best_score > 0:
-                    if optimistic_bonus(state, remaining_draws - 1) <= best_score:
+                    postdraw_optimistic = optimistic_bonus(state, remaining_draws - 1)
+                    if postdraw_optimistic <= best_score:
                         path.pop()
                         state.rest[draw_tile] += 1
                         state.hand[draw_tile] -= 1
                         continue
 
-                discards = _discard_candidates(state, get_waits(state.hand))[:4]
+                # 弃牌候选: 使用摸牌前的听牌信息 (get_waits 仅接受13张手牌)
+                discards = _discard_candidates(state, waits_before)[:4]
 
                 for discard_tile in discards:
                     if found:
@@ -588,12 +552,6 @@ def search_max_score(
                         continue
                     if discard_tile == draw_tile and hand_key[discard_tile] <= 1:
                         continue
-                    if mode == "max" and best_score > 0 and enable_pruning:
-                        state.hand[discard_tile] -= 1
-                        pot = optimistic_bonus(state, max_depth - depth - 1)
-                        state.hand[discard_tile] += 1
-                        if pot <= 0:
-                            continue
 
                     state.hand[discard_tile] -= 1
                     state.rest[discard_tile] += 1
@@ -605,43 +563,63 @@ def search_max_score(
                     state.rest[discard_tile] -= 1
                     state.hand[discard_tile] += 1
 
-            # ——— 快模式鸣牌 (碰/吃) ———
+            # ——— 快模式鸣牌 (碰/吃/杠) ———
             if mode == "fast" and depth + 1 < max_depth and not found:
-                meld_actions = _gen_melds(state)
-                for meld_type, called_tile, hand_tiles in meld_actions[:3]:
+                meld_actions = generate_all_melds_from_wall(
+                    state.hand, state.rest, state.melds
+                )
+                for meld in meld_actions[:3]:
                     if found:
                         break
-                    # 从手牌移除面子牌
+
+                    # 确定需要从手牌移除的牌
+                    if meld.meld_type == 'pon':
+                        hand_tiles = [meld.tiles[0], meld.tiles[0]]  # 手牌2张
+                    elif meld.meld_type == 'kan':
+                        hand_tiles = [meld.tiles[0]] * 3  # 手牌3张
+                    elif meld.meld_type == 'chi':
+                        # 吃的牌中, called_tile 来自牌河, 其余来自手牌
+                        hand_tiles = [t for t in meld.tiles if t != meld.called_tile]
+                    else:
+                        continue
+
+                    # 验证手牌足够
+                    valid = True
                     for ht in hand_tiles:
                         if state.hand[ht] <= 0:
+                            valid = False
                             break
-                    else:
-                        for ht in hand_tiles:
-                            state.hand[ht] -= 1
-                        state.rest[called_tile] -= 1
-                        path.append((meld_type, called_tile))
+                    if not valid:
+                        continue
 
-                        # 鸣牌后弃1张 → 递归
-                        post_discards = _discard_candidates(state)[:3]
-                        for discard_tile in post_discards:
-                            if found:
-                                break
-                            if state.hand[discard_tile] <= 0:
-                                continue
-                            state.hand[discard_tile] -= 1
-                            state.rest[discard_tile] += 1
-                            path.append(('discard', discard_tile))
+                    # 从手牌移除, 从牌山扣除 called_tile
+                    for ht in hand_tiles:
+                        state.hand[ht] -= 1
+                    called_tile = meld.called_tile if meld.called_tile is not None else meld.tiles[0]
+                    state.rest[called_tile] -= 1
+                    path.append((meld.meld_type, called_tile))
 
-                            search(state, depth + 1, path)
+                    # 鸣牌后弃1张 → 递归
+                    post_discards = _discard_candidates(state)[:3]
+                    for discard_tile in post_discards:
+                        if found:
+                            break
+                        if state.hand[discard_tile] <= 0:
+                            continue
+                        state.hand[discard_tile] -= 1
+                        state.rest[discard_tile] += 1
+                        path.append(('discard', discard_tile))
 
-                            path.pop()
-                            state.rest[discard_tile] -= 1
-                            state.hand[discard_tile] += 1
+                        search(state, depth + 1, path)
 
                         path.pop()
-                        state.rest[called_tile] += 1
-                        for ht in hand_tiles:
-                            state.hand[ht] += 1
+                        state.rest[discard_tile] -= 1
+                        state.hand[discard_tile] += 1
+
+                    path.pop()
+                    state.rest[called_tile] += 1
+                    for ht in hand_tiles:
+                        state.hand[ht] += 1
 
             path.pop()
             state.rest[draw_tile] += 1

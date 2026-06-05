@@ -6,10 +6,7 @@
 """
 
 from typing import List
-
-
-# 老头牌: 1m(0), 9m(8), 1p(9), 9p(17), 1s(18), 9s(26)
-TERMINAL_TILES = {0, 8, 9, 17, 18, 26}
+from ..tile import TERMINAL_TILES
 
 
 def check_chinroutou(hand_14: List[int]) -> int:

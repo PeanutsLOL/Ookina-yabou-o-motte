@@ -6,7 +6,7 @@
 
 from typing import List
 from .tile import NUM_TILES
-from .decompose import can_agari, check_kokushi_structure
+from .decompose import can_agari
 from .state import GameState
 
 

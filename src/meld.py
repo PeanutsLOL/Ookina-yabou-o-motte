@@ -167,6 +167,52 @@ def generate_chi(hand: List[int], called_tile: int, from_player: int = 3) -> Lis
     return results
 
 
+def generate_all_melds_from_wall(
+    hand: List[int], rest: List[int], existing_melds: List[Meld]
+) -> List[Meld]:
+    """
+    扫描牌山中所有可用牌，生成所有可能的鸣牌动作。
+
+    用于搜索快模式: 不模拟对手出牌，直接从牌山判定可鸣动作。
+    优先碰（完成刻子比顺子快）。
+
+    Args:
+        hand: 手牌计数数组
+        rest: 牌山剩余计数数组
+        existing_melds: 已有副露列表
+
+    Returns:
+        Meld 对象列表 (碰优先排序)
+    """
+    from .tile import suit, SUIT_JIHAI
+
+    actions: List[Meld] = []
+
+    for t in range(NUM_TILES):
+        if rest[t] <= 0:
+            continue
+
+        # 碰: 手中有≥2张
+        pon = generate_pon(hand, t)
+        if pon:
+            actions.append(pon)
+
+        # 大明杠: 手中有3张
+        kan = generate_daiminkan(hand, t)
+        if kan:
+            actions.append(kan)
+
+        # 吃: 数牌 (generate_chi 内部检查是否合法)
+        s = suit(t)
+        if s != SUIT_JIHAI:
+            chi_melds = generate_chi(hand, t)
+            actions.extend(chi_melds)
+
+    # 碰优先
+    actions.sort(key=lambda m: (0 if m.meld_type in ('pon', 'kan') else 1))
+    return actions
+
+
 def generate_all_melds(
     hand: List[int], called_tile: int, from_player: int, existing_melds: List[Meld]
 ) -> List[Meld]:

@@ -7,10 +7,7 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 
-from .tile import tile_name
-
-# 牌编码常量
-NUM_TILES = 34
+from .tile import tile_name, NUM_TILES
 
 
 @dataclass
@@ -199,23 +196,6 @@ class GameState:
                 )
             if self.rest[t] > 4:
                 self.rest[t] = 4  # 安全截断
-
-
-@dataclass
-class SearchNode:
-    """搜索树节点
-
-    Attributes:
-        state: 当前牌局状态
-        path: 到达该节点的路径 [(动作, 牌), ...]
-              动作类型: 'draw'(摸牌), 'pon'(碰), 'kan'(杠), 'chi'(吃), 'ankan'(暗杠)
-        score: 当前路径的番数 (若已和牌)
-        depth: 当前搜索深度 (已摸牌次数)
-    """
-    state: GameState
-    path: List[Tuple[str, int]] = field(default_factory=list)
-    score: int = 0
-    depth: int = 0
 
 
 @dataclass

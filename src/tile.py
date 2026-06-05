@@ -21,8 +21,6 @@ SUIT_PINZU = 1    # 筒子
 SUIT_SOUZU = 2    # 索子
 SUIT_JIHAI = 3    # 字牌
 
-SUIT_NAMES = {0: "万", 1: "筒", 2: "索", 3: "字"}
-
 # 幺九牌索引 (终端牌 + 字牌)
 YAOCHU_TILES = {
     0, 8,           # 1m, 9m
@@ -247,9 +245,3 @@ def dora_indicator_to_dora(indicator: int) -> int:
 # ── 常量：所有34种牌的列表 ─────────────────────────────
 
 ALL_TILES = list(range(NUM_TILES))
-
-# 按花色分组的牌列表
-MANZU_TILES = list(range(0, 9))
-PINZU_TILES = list(range(9, 18))
-SOUZU_TILES = list(range(18, 27))
-JIHAI_TILES = list(range(27, 34))

@@ -7,8 +7,7 @@
 
 from typing import List
 from .tile import (
-    NUM_TILES, suit, SUIT_JIHAI, SUIT_MANZU, SUIT_PINZU, SUIT_SOUZU,
-    YAOCHU_TILES
+    NUM_TILES, suit, SUIT_JIHAI, YAOCHU_TILES
 )
 from .state import GameState
 
@@ -99,21 +98,3 @@ def optimistic_bonus(state: GameState, remaining_draws: int) -> int:
             bonus += 1
 
     return bonus
-
-
-# ── 互斥表 ──────────────────────────────────────────
-
-# 某些役满之间不能同时存在
-MUTUALLY_EXCLUSIVE = {
-    ('kokushi', 'chuuren'): True,   # 国士含字+19，九莲全同花色
-    ('kokushi', 'tsuuiisou'): False,  # 国士含19数牌，字一色全字
-    ('tsuuiisou', 'chinitsu'): True,  # 字 vs 数
-}
-
-
-def are_yaku_compatible(yaku_a: str, yaku_b: str) -> bool:
-    """检查两种役满是否可以共存"""
-    return not MUTUALLY_EXCLUSIVE.get(
-        (yaku_a, yaku_b),
-        MUTUALLY_EXCLUSIVE.get((yaku_b, yaku_a), False)
-    )
