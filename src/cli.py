@@ -13,6 +13,7 @@ from .tile import (
 )
 from .state import GameState
 from .search import search_max_score, search_no_pruning
+from .simulate import simulate_game
 
 
 # ── 辅助函数 ──────────────────────────────────────────
@@ -79,7 +80,7 @@ def _input_hand_interactive() -> List[int]:
 def _input_dora_indicators() -> List[int]:
     """输入宝牌指示牌"""
     print("\n请输入已出现的宝牌指示牌（用逗号分隔，如 5m,9p,白）")
-    print("直接回车跳过（无宝牌）")
+    print("直接回车跳过（无宝牌，将在模拟中随机生成）")
 
     try:
         dora_str = input("宝牌指示牌> ").strip()
@@ -127,6 +128,104 @@ def _input_river() -> Optional[List[int]]:
         return None
 
 
+# ── 牌局模拟 ──────────────────────────────────────────
+
+def _input_simulation(
+    hand: List[int],
+    dora_indicators: List[int],
+) -> tuple:
+    """
+    询问用户是否模拟牌局以生成牌河数据。
+
+    若用户选择模拟，则随机发牌给 3 家对手，自动补全宝牌/里宝牌，
+    按牌效最优模拟摸打过程，返回生成的牌河和宝牌数据。
+
+    Args:
+        hand: 用户手牌计数数组（sum=13）
+        dora_indicators: 用户已输入的宝牌指示牌（可能为空或不足5张）
+
+    Returns:
+        (river, full_dora, ura_dora) — 均为 Optional
+        若用户跳过则返回 (None, None, None)
+    """
+    print()
+    print("是否模拟牌局生成牌河？")
+    print("  系统将随机给 3 家对手发牌，按牌效最优模拟摸打过程，")
+    print("  自动补全宝牌/里宝牌（各补足至 5 张），生成牌河数据。")
+    try:
+        choice = input("(y/n, 直接回车跳过): ").strip().lower()
+    except KeyboardInterrupt:
+        return None, None, None
+
+    if choice != 'y':
+        return None, None, None
+
+    # ── 模拟巡目数 ──
+    try:
+        turns_str = input("模拟巡目数 (直接回车=8): ").strip()
+        max_turns = int(turns_str) if turns_str else 8
+    except (ValueError, KeyboardInterrupt):
+        max_turns = 8
+
+    # ── 随机种子 ──
+    try:
+        seed_str = input("随机种子 (直接回车=随机): ").strip()
+        seed = int(seed_str) if seed_str else None
+    except (ValueError, KeyboardInterrupt):
+        seed = None
+
+    # ── 构建临时牌山 ──
+    # 从 4 张/种开始，减去用户手牌（宝牌由 simulate_game 内部处理）
+    temp_rest = [4] * NUM_TILES
+    for t in range(NUM_TILES):
+        temp_rest[t] -= hand[t]
+
+    # 检查最少牌数：发牌 39 + 首巡摸 3 = 42（未计入王牌区 10 张）
+    available = sum(temp_rest)
+    if available < 42:
+        print(f"  错误: 牌山剩余牌数不足 ({available}张)，无法进行有意义的模拟")
+        return None, None, None
+
+    # ── 执行模拟 ──
+    print(f"\n  正在模拟 {max_turns} 巡...")
+    try:
+        rivers, combined, full_dora, ura_dora = simulate_game(
+            user_hand=hand,
+            rest=temp_rest,
+            max_turns=max_turns,
+            dora_indicators=dora_indicators if dora_indicators else None,
+            seed=seed,
+        )
+    except ValueError as e:
+        print(f"  模拟失败: {e}")
+        return None, None, None
+
+    # ── 展示结果 ──
+    total_discards = sum(combined)
+    print(f"\n  === 模拟结果: {max_turns}巡指定, 实际生成 {total_discards} 张牌河 ===")
+
+    # 宝牌/里宝牌
+    dora_names = ' '.join(tile_name(t) for t in full_dora)
+    ura_names = ' '.join(tile_name(t) for t in ura_dora)
+    dora_tiles = ' '.join(
+        tile_name(dora_indicator_to_dora(t)) for t in full_dora
+    )
+    print(f"  宝牌指示牌 ({len(full_dora)}张): {dora_names}")
+    print(f"  对应宝牌:                 {dora_tiles}")
+    print(f"  里宝牌指示牌 ({len(ura_dora)}张): {ura_names}")
+
+    # 各家牌河
+    for i in range(3):
+        tile_list = []
+        for t in range(NUM_TILES):
+            tile_list.extend([tile_name(t)] * rivers[i][t])
+        river_str = ' '.join(tile_list) if tile_list else '(空)'
+        discards = sum(rivers[i])
+        print(f"  对手{i+1}牌河 ({discards}张): {river_str}")
+
+    return combined, full_dora, ura_dora
+
+
 # ── 主入口 ─────────────────────────────────────────────
 
 def run_cli():
@@ -142,8 +241,19 @@ def run_cli():
     # Step 2: 输入宝牌指示牌
     dora_indicators = _input_dora_indicators()
 
-    # Step 3: 输入牌河（可选）
-    river = _input_river()
+    # Step 3: 模拟牌局生成牌河（可选）
+    sim_river, full_dora, ura_dora = _input_simulation(hand, dora_indicators)
+
+    if sim_river is not None:
+        # 使用模拟结果
+        river = sim_river
+        dora_indicators = full_dora
+        ura_dora_indicators = ura_dora
+        print("\n  (已使用模拟生成的牌河和宝牌，跳过手动输入)")
+    else:
+        # Step 3b: 手动输入牌河（可选）
+        river = _input_river()
+        ura_dora_indicators = []
 
     # Step 4: 输入自风和场风 (用于役牌判定)
     print()
@@ -185,6 +295,7 @@ def run_cli():
     state = GameState(
         hand=hand,
         dora_indicators=dora_indicators,
+        ura_dora_indicators=ura_dora_indicators,
         turn=turn,
         player_wind=player_wind,
         round_wind=round_wind,
