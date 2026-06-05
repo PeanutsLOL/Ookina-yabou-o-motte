@@ -180,9 +180,9 @@ def _input_simulation(
     for t in range(NUM_TILES):
         temp_rest[t] -= hand[t]
 
-    # 检查最少牌数：发牌 39 + 首巡摸 3 = 42（未计入王牌区 10 张）
+    # 检查最少牌数：发牌 39 + 王牌区 10 + 首巡摸 4 = 53
     available = sum(temp_rest)
-    if available < 42:
+    if available < 53:
         print(f"  错误: 牌山剩余牌数不足 ({available}张)，无法进行有意义的模拟")
         return None, None, None
 
@@ -215,13 +215,14 @@ def _input_simulation(
     print(f"  里宝牌指示牌 ({len(ura_dora)}张): {ura_names}")
 
     # 各家牌河
-    for i in range(3):
+    labels = ["对手1", "对手2", "对手3", "自家"]
+    for i in range(4):
         tile_list = []
         for t in range(NUM_TILES):
             tile_list.extend([tile_name(t)] * rivers[i][t])
         river_str = ' '.join(tile_list) if tile_list else '(空)'
         discards = sum(rivers[i])
-        print(f"  对手{i+1}牌河 ({discards}张): {river_str}")
+        print(f"  {labels[i]}牌河 ({discards}张): {river_str}")
 
     return combined, full_dora, ura_dora
 

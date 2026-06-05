@@ -352,10 +352,10 @@ class TestSimulateGame:
             seed=42,
         )
 
-        # 1巡 × 3家 = 3张弃牌
+        # 1巡 × 4家 = 4张弃牌
         total_discards = sum(combined)
-        assert total_discards == 3, f"1巡应生成3张牌河, got {total_discards}"
-        assert len(rivers) == 3
+        assert total_discards == 4, f"1巡应生成4张牌河, got {total_discards}"
+        assert len(rivers) == 4
         assert len(full_dora) == 5
         assert len(ura_dora) == 5
 
@@ -392,7 +392,7 @@ class TestSimulateGame:
         )
 
         for t in range(NUM_TILES):
-            expected = sum(rivers[i][t] for i in range(3))
+            expected = sum(rivers[i][t] for i in range(4))
             assert combined[t] == expected, (
                 f"牌 {tile_name(t)}: combined={combined[t]}, sum={expected}"
             )
@@ -421,13 +421,14 @@ class TestSimulateGame:
 
     def test_seed_reproducibility(self):
         """相同种子产生相同结果"""
-        user_hand = parse_hand_str("123m456p789s12345z")
+        hand_template = parse_hand_str("123m456p789s12345z")
 
         def run_sim(seed):
+            hand = hand_template.copy()
             rest = [4] * NUM_TILES
             for t in range(NUM_TILES):
-                rest[t] -= user_hand[t]
-            return simulate_game(user_hand, rest, max_turns=2, seed=seed)
+                rest[t] -= hand[t]
+            return simulate_game(hand, rest, max_turns=2, seed=seed)
 
         r1 = run_sim(42)
         r2 = run_sim(42)
@@ -438,7 +439,7 @@ class TestSimulateGame:
         assert combined1 == combined2
         assert dora1 == dora2
         assert ura1 == ura2
-        for i in range(3):
+        for i in range(4):
             assert rivers1[i] == rivers2[i]
 
     def test_wall_exhaustion_handled(self):
@@ -456,7 +457,7 @@ class TestSimulateGame:
                 rest[t] = min(4, max(0, 4 - user_hand[t]))
 
         total_rest = sum(rest)
-        if total_rest >= 42:
+        if total_rest >= 53:
             # 牌山够用，正常模拟
             rivers, combined, _, _ = simulate_game(
                 user_hand=user_hand,
@@ -465,7 +466,7 @@ class TestSimulateGame:
                 seed=42,
             )
             # 不应崩溃
-            assert len(rivers) == 3
+            assert len(rivers) == 4
         else:
             # 牌山不足，deal_opponent_hands 应抛异常
             try:

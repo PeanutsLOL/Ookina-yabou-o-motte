@@ -257,26 +257,26 @@ def simulate_game(
     seed: Optional[int] = None,
 ) -> Tuple[List[List[int]], List[int], List[int], List[int]]:
     """
-    模拟对手摸牌和弃牌过程，生成牌河和宝牌数据。
+    模拟全桌摸牌和弃牌过程，生成牌河和宝牌数据。
 
     工作流程:
       1. 从牌山随机发牌给 3 家对手（各 13 张）
       2. 随机生成宝牌/里宝牌指示牌（不与任何手牌冲突）
       3. 模拟 max_turns 巡的摸打过程：
-         每巡每家 → 摸 1 张（随机）→ 弃 1 张（牌效最优）
-      4. 记录所有弃牌到各家牌河
+         每巡: 对手1→对手2→对手3→用户 各摸1弃1（牌效最优）
+      4. 记录所有弃牌到各家牌河（含用户自家）
 
     Args:
-        user_hand: 用户手牌计数数组（sum=13，不被修改）
-        rest: 牌山剩余计数数组（会被原地修改：发牌 + 摸牌 + 宝牌扣除）
-        max_turns: 最大模拟巡数（每巡 3 家各摸打一次）
+        user_hand: 用户手牌计数数组（sum=13，会被原地修改）
+        rest: 牌山剩余计数数组（会被原地修改）
+        max_turns: 最大模拟巡数（每巡 4 家各摸打一次）
         dora_indicators: 用户已输入的宝牌指示牌（可为空或 None）
         seed: 随机种子（用于可复现性）
 
     Returns:
         Tuple of:
-          - rivers: 3 个对手各自的牌河（List[List[int]]，每个 length=34）
-          - combined: 合并后的总牌河（List[int]，length=34）
+          - rivers: 4 家各自的牌河（opp1, opp2, opp3, user）
+          - combined: 合并后的总牌河（4家之和）
           - full_dora: 完整宝牌指示牌列表（5 张）
           - ura_dora: 里宝牌指示牌列表（5 张）
     """
@@ -302,39 +302,39 @@ def simulate_game(
         if rest[t] > 0:
             rest[t] -= 1
 
-    # ── Step 4: 模拟摸打 ──
-    rivers = [[0] * NUM_TILES for _ in range(3)]
+    # ── Step 4: 模拟摸打（3家对手 + 用户自家）──
+    rivers = [[0] * NUM_TILES for _ in range(4)]  # opp1, opp2, opp3, user
+    all_hands = opponent_hands + [user_hand]       # 4 家手牌引用
 
     for turn in range(max_turns):
-        for opp_idx in range(3):
+        for player_idx in range(4):
             # 构建可用牌池
             deck = []
             for t in range(NUM_TILES):
                 deck.extend([t] * rest[t])
 
             if not deck:
-                # 牌山耗尽
                 break
 
             # 摸牌
             draw = rng.choice(deck)
             rest[draw] -= 1
-            opponent_hands[opp_idx][draw] += 1  # 现在是 14 张
+            all_hands[player_idx][draw] += 1  # 现在是 14 张
 
             # 弃牌（牌效最优）
-            discard = best_discard(opponent_hands[opp_idx], full_dora)
-            opponent_hands[opp_idx][discard] -= 1  # 回到 13 张
-            rivers[opp_idx][discard] += 1
+            discard = best_discard(all_hands[player_idx], full_dora)
+            all_hands[player_idx][discard] -= 1  # 回到 13 张
+            rivers[player_idx][discard] += 1
             # 弃牌不进牌山 — 牌河中的牌不再可摸
 
-        # 检查是否牌山耗尽（外层也检查）
+        # 检查是否牌山耗尽
         if sum(rest) == 0:
             break
 
     # ── Step 5: 汇总 ──
     combined = [0] * NUM_TILES
     for t in range(NUM_TILES):
-        for i in range(3):
+        for i in range(4):
             combined[t] += rivers[i][t]
 
     return rivers, combined, full_dora, ura_dora
