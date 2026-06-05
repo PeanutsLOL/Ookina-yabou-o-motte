@@ -117,6 +117,44 @@ def can_agari(counts_14: List[int]) -> bool:
     return has_valid_decomposition(counts_14)
 
 
+def can_agari_with_melds(hand: List[int], num_melds: int) -> bool:
+    """
+    判断手牌 + 已有副露是否构成和牌形。
+
+    每个副露面子算 1 组已完成的面子（刻子或顺子），
+    剩余手牌需组成 (4 - num_melds) 组面子 + 1 组雀头。
+
+    仅支持标准形（不支持七对子/国士 + 副露的组合）。
+    暗杠算 1 组刻子，不影响门清判定。
+
+    Args:
+        hand: 手牌计数数组（张数 < 14）
+        num_melds: 已有副露面子的数量
+
+    Returns:
+        True 若手牌 + 副露构成和牌形
+    """
+    # 无副露时直接用 can_agari（支持国士/七对子）
+    if num_melds == 0:
+        return can_agari(hand)
+
+    needed_melds = 4 - num_melds
+    needed_tiles = needed_melds * 3 + 2  # 面子 + 雀头
+
+    if needed_melds < 0:
+        return False
+    if sum(hand) != needed_tiles:
+        return False
+
+    for t in range(NUM_TILES):
+        if hand[t] >= 2:
+            c = hand.copy()
+            c[t] -= 2
+            if count_melds(c) == needed_melds:
+                return True
+    return False
+
+
 def get_waits(counts_13: List[int]) -> List[int]:
     """
     给定 13 张手牌，返回所有能使之和牌的被听牌列表。

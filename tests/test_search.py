@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from src.tile import parse_hand_str
 from src.state import GameState
-from src.search import search_max_score, search_no_pruning, calculate_score
+from src.search import search_max_score, search_fastest_win, search_no_pruning, calculate_score
 
 
 def build_state(hand_str: str) -> GameState:
@@ -162,7 +162,7 @@ class TestCalculateScore:
     def test_case_8_fast_mode(self):
         """用例8: 最快和牌模式 - 123456789m111p2s 应1-2巡内能和"""
         state = build_state("123456789m111p2s")
-        result = search_max_score(state, max_depth=4, enable_pruning=True, mode="fast")
+        result = search_fastest_win(state, max_depth=4)
         assert result.max_score >= 1, f"最快模式应找到和牌路径, got {result.max_score}"
         # 最快路径应 ≤ 3 巡
         draws = len([a for a, _ in result.best_path if a == 'draw'])

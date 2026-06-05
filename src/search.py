@@ -21,7 +21,7 @@ import time
 
 from .tile import NUM_TILES, tile_name
 from .state import GameState, Meld, SearchResult
-from .decompose import can_agari, get_waits
+from .decompose import can_agari, can_agari_with_melds, get_waits
 from .yaku import (
     check_kokushi, check_suuankou, check_daisangen, check_chuuren,
     check_daisuushi, check_shousuushi, check_tsuuiisou,
@@ -398,24 +398,21 @@ def _describe_yaku(state: GameState, score: int,
     return details
 
 
-def search_max_score(
+def _search_max_score(
     initial_state: GameState,
     max_depth: int = 5,
     enable_pruning: bool = True,
-    mode: str = "max",
 ) -> SearchResult:
     """
-    搜索理论最优。
+    搜索理论最大番数（DFS + 分支定界）。
 
-    mode:
-      "max"  - 最大番数 (默认), 寻找最高役满倍数
-      "fast" - 最快和牌, 寻找最少摸牌次数内能和的任意有役手牌
+    搜索最高役满倍数，使用剪枝和状态缓存加速。
+    不支持鸣牌（门清限定搜索）。
 
     Args:
         initial_state: 初始牌局状态 (13张标准)
         max_depth: 最大摸牌次数
         enable_pruning: 是否启用剪枝
-        mode: "max" | "fast"
     """
     best_score = 0
     best_path: List[Tuple[str, int]] = []
@@ -423,72 +420,63 @@ def search_max_score(
     best_yaku: List[str] = []       # 最优和牌的役种明细
     nodes_searched = 0
     nodes_pruned = 0
-    found: bool = False  # 快模式: 找到即全局停止
-    visited: dict = {}   # max模式: (hand_tuple, depth) → avoid re-search
+    visited: dict = {}   # (hand_tuple, depth) → 避免重复搜索
 
     start_time = time.perf_counter()
 
     def search(state: GameState, depth: int,
                path: List[Tuple[str, int]]):
         nonlocal best_score, best_path, best_hand, best_yaku
-        nonlocal nodes_searched, nodes_pruned, found
+        nonlocal nodes_searched, nodes_pruned
 
-        if found:  # 快模式已找到, 全停止
-            return
         nodes_searched += 1
 
         if depth >= max_depth:
             return
 
-        # ── max模式: 状态缓存 ──
-        if mode == "max":
-            hand_key = tuple(state.hand)
-            cache_key = (hand_key, depth)
-            if cache_key in visited:
-                nodes_pruned += 1
-                return
-            visited[cache_key] = True
-        else:
-            hand_key = tuple(state.hand)
+        # ── 弃牌递归辅助（暗杠/正常路径共用）──
+        def _discard_and_recurse(st: GameState, next_depth: int,
+                                 waits: List[int], drawn_tile: int,
+                                 hand_key_tuple: tuple):
+            discards = _discard_candidates(st, waits)[:4]
+            for dt in discards:
+                if st.hand[dt] <= 0:
+                    continue
+                if dt == drawn_tile and hand_key_tuple[dt] <= 1:
+                    continue
 
-        # ── max模式: 剪枝 ──
+                st.hand[dt] -= 1
+                st.rest[dt] += 1
+                path.append(('discard', dt))
+
+                search(st, next_depth, path)
+
+                path.pop()
+                st.rest[dt] -= 1
+                st.hand[dt] += 1
+
+        # ── 状态缓存 ──
+        hand_key = tuple(state.hand)
+        cache_key = (hand_key, depth)
+        if cache_key in visited:
+            nodes_pruned += 1
+            return
+        visited[cache_key] = True
+
+        # ── 剪枝 ──
         remaining_draws = max_depth - depth
-        if mode == "max" and enable_pruning and best_score > 0:
+        if enable_pruning and best_score > 0:
             if optimistic_bonus(state, remaining_draws) <= best_score:
                 nodes_pruned += 1
                 return
 
         waits_before = get_waits(state.hand)
-        if mode == "fast":
-            # 快模式: 听牌→只摸被听牌, 未听→摸靠张(避免全摸)
-            if waits_before:
-                draw_order = [t for t in waits_before
-                              if state.rest[t] > 0 and state.hand[t] < 4]
-            else:
-                # 摸手牌中已有牌 + 相邻牌 (最多15种)
-                useful = set()
-                for t in range(NUM_TILES):
-                    if state.hand[t] >= 1 and state.rest[t] > 0 and state.hand[t] < 4:
-                        useful.add(t)
-                        s = t // 9
-                        n = t % 9
-                        if s < 3:
-                            for dn in (-2, -1, 1, 2):
-                                adj = t + dn
-                                if s*9 <= adj < s*9+9 and state.rest[adj] > 0 and state.hand[adj] < 4:
-                                    useful.add(adj)
-                draw_order = list(useful)
-            # 按剩余数量和已有数量排序
-            draw_order.sort(key=lambda t: -(state.rest[t]*3 + state.hand[t]*5))
-        else:
-            draw_order = _useful_draws(state, waits_before)
+        draw_order = _useful_draws(state, waits_before)
 
         for draw_tile in draw_order:
-            if found:
-                return
             if state.rest[draw_tile] <= 0 or state.hand[draw_tile] >= 4:
                 continue
-            if mode == "max" and waits_before and draw_tile not in waits_before:
+            if waits_before and draw_tile not in waits_before:
                 continue
 
             # ——— 摸牌 ———
@@ -497,52 +485,231 @@ def search_max_score(
             path.append(('draw', draw_tile))
 
             # ——— 和牌检查 ———
-            # 快模式: 和牌手牌数 = 14 - 2*n_melds (每次碰/吃减2张手牌)
-            meld_count = sum(1 for a, _ in path if a in ('pon', 'chi', 'kan'))
-            target_size = 14 - 2 * meld_count
-            if state.hand_size == target_size and can_agari(state.hand):
-                if mode == "fast":
-                    from .yaku.regular import has_any_yaku
-                    if has_any_yaku(state):
-                        best_score = 1
-                        best_path = path.copy()
-                        best_hand = state.hand.copy()
-                        best_yaku = ["最快和牌 (任意有役)"]
-                        found = True
+            if can_agari_with_melds(state.hand, len(state.melds)):
+                tenpai = state.hand.copy()
+                tenpai[draw_tile] -= 1
+                yakus = _check_yakuman_all(state.hand, state.melds, tenpai)
+                s = calculate_score(state, tenpai_hand=tenpai, yaku_results=yakus)
+                if s > best_score:
+                    best_score = s
+                    best_path = path.copy()
+                    best_hand = state.hand.copy()
+                    best_yaku = _describe_yaku(state, s, tenpai_hand=tenpai, yaku_results=yakus)
+                    if best_score >= 6:
                         path.pop()
                         state.rest[draw_tile] += 1
                         state.hand[draw_tile] -= 1
                         return
-                else:
-                    if target_size == 14:  # max模式不处理鸣牌
-                        tenpai = state.hand.copy()
-                        tenpai[draw_tile] -= 1
-                        yakus = _check_yakuman_all(state.hand, state.melds, tenpai)
-                        s = calculate_score(state, tenpai_hand=tenpai, yaku_results=yakus)
-                        if s > best_score:
-                            best_score = s
-                            best_path = path.copy()
-                            best_hand = state.hand.copy()
-                            best_yaku = _describe_yaku(state, s, tenpai_hand=tenpai, yaku_results=yakus)
-                            if best_score >= 6:
-                                path.pop()
-                                state.rest[draw_tile] += 1
-                                state.hand[draw_tile] -= 1
-                                return
 
-            # ——— 弃牌/鸣牌 → 递归 ———
-            if depth + 1 < max_depth and not found:
-                # ── max模式: 摸牌后剪枝（复用节点顶部的逻辑）──
-                postdraw_optimistic = None
-                if mode == "max" and best_score > 0:
-                    postdraw_optimistic = optimistic_bonus(state, remaining_draws - 1)
-                    if postdraw_optimistic <= best_score:
+            # ——— 暗杠处理 + 弃牌 → 递归 ———
+            if depth + 1 < max_depth:
+                # ── 摸牌后剪枝 ──
+                if best_score > 0:
+                    if optimistic_bonus(state, remaining_draws - 1) <= best_score:
                         path.pop()
                         state.rest[draw_tile] += 1
                         state.hand[draw_tile] -= 1
                         continue
 
-                # 弃牌候选: 使用摸牌前的听牌信息 (get_waits 仅接受13张手牌)
+                # ── 正常弃牌（无暗杠）──
+                _discard_and_recurse(state, depth + 1, waits_before,
+                                     draw_tile, hand_key)
+
+                # ── 尝试暗杠 ──
+                for ankan_tile in range(NUM_TILES):
+                    if state.hand[ankan_tile] < 4:
+                        continue
+
+                    # 声明暗杠
+                    from .meld import generate_kan_from_hand
+                    ankan = generate_kan_from_hand(state.hand, ankan_tile)
+                    if ankan is None:
+                        continue
+
+                    state.hand[ankan_tile] -= 4
+                    state.melds.append(ankan)
+                    path.append(('ankan', ankan_tile))
+
+                    # 从牌山摸替代牌
+                    repl_candidates = _useful_draws(state, [])
+                    for repl_tile in repl_candidates[:8]:
+                        if state.rest[repl_tile] <= 0:
+                            continue
+
+                        state.hand[repl_tile] += 1
+                        state.rest[repl_tile] -= 1
+
+                        # 岭上开花检查
+                        if can_agari_with_melds(state.hand, len(state.melds)):
+                            tenpai2 = state.hand.copy()
+                            tenpai2[repl_tile] -= 1
+                            yakus2 = _check_yakuman_all(state.hand, state.melds, tenpai2)
+                            s2 = calculate_score(state, tenpai_hand=tenpai2, yaku_results=yakus2)
+                            if s2 > best_score:
+                                best_score = s2
+                                best_path = path.copy()
+                                best_hand = state.hand.copy()
+                                best_yaku = _describe_yaku(state, s2, tenpai_hand=tenpai2, yaku_results=yakus2)
+                                if best_score >= 6:
+                                    state.rest[repl_tile] += 1
+                                    state.hand[repl_tile] -= 1
+                                    path.pop()
+                                    state.melds.pop()
+                                    state.hand[ankan_tile] += 4
+                                    path.pop()
+                                    state.rest[draw_tile] += 1
+                                    state.hand[draw_tile] -= 1
+                                    return
+
+                        # 暗杠后弃牌（同深度，可继续暗杠）
+                        _discard_and_recurse(state, depth, waits_before,
+                                             repl_tile, hand_key)
+
+                        state.rest[repl_tile] += 1
+                        state.hand[repl_tile] -= 1
+
+                    path.pop()
+                    state.melds.pop()
+                    state.hand[ankan_tile] += 4
+
+            path.pop()
+            state.rest[draw_tile] += 1
+            state.hand[draw_tile] -= 1
+
+    # ── 入口处理 ─────────────────────────────────
+
+    if initial_state.hand_size == 14:
+        if can_agari(initial_state.hand):
+            score = calculate_score(initial_state)
+            if score > best_score:
+                best_score = score
+                best_path = [('_initial', -1)]
+                best_hand = initial_state.hand.copy()
+                best_yaku = _describe_yaku(initial_state, score)
+
+        candidates = _discard_candidates(initial_state)
+        best_initial_score = best_score
+
+        for discard_tile in candidates:
+            if initial_state.hand[discard_tile] <= 0:
+                continue
+            state = initial_state.copy()
+            state.hand[discard_tile] -= 1
+            state.rest[discard_tile] += 1
+            search(state, 0, [('discard', discard_tile)])
+
+        if best_initial_score > 0 and best_score <= best_initial_score:
+            best_score = best_initial_score
+
+    elif initial_state.hand_size == 13:
+        search(initial_state, 0, [])
+
+    else:
+        raise ValueError(
+            f"手牌数量不正确: {initial_state.hand_size} "
+            f"(期望 13 或 14)"
+        )
+
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+
+    return SearchResult(
+        max_score=best_score,
+        best_path=best_path,
+        final_hand=best_hand,
+        yaku_details=best_yaku,
+        nodes_searched=nodes_searched,
+        nodes_pruned=nodes_pruned,
+        elapsed_ms=elapsed_ms,
+    )
+
+
+def search_fastest_win(
+    initial_state: GameState,
+    max_depth: int = 5,
+) -> SearchResult:
+    """
+    搜索最快和牌路径（最少摸牌次数内能和的任意有役手牌）。
+
+    使用简单的牌效启发式摸牌、支持鸣牌（碰/吃/杠），
+    找到第一个有效和牌即停止。
+
+    Args:
+        initial_state: 初始牌局状态 (13张标准)
+        max_depth: 最大摸牌次数
+    """
+    best_score = 0
+    best_path: List[Tuple[str, int]] = []
+    best_hand: List[int] = []
+    best_yaku: List[str] = []
+    nodes_searched = 0
+    nodes_pruned = 0
+    found: bool = False  # 找到即全局停止
+
+    start_time = time.perf_counter()
+
+    def search(state: GameState, depth: int,
+               path: List[Tuple[str, int]]):
+        nonlocal best_score, best_path, best_hand, best_yaku
+        nonlocal nodes_searched, nodes_pruned, found
+
+        if found:
+            return
+        nodes_searched += 1
+
+        if depth >= max_depth:
+            return
+
+        hand_key = tuple(state.hand)
+
+        waits_before = get_waits(state.hand)
+
+        # ── 摸牌候选 ──
+        if waits_before:
+            draw_order = [t for t in waits_before
+                          if state.rest[t] > 0 and state.hand[t] < 4]
+        else:
+            useful = set()
+            for t in range(NUM_TILES):
+                if state.hand[t] >= 1 and state.rest[t] > 0 and state.hand[t] < 4:
+                    useful.add(t)
+                    s = t // 9
+                    n = t % 9
+                    if s < 3:
+                        for dn in (-2, -1, 1, 2):
+                            adj = t + dn
+                            if s*9 <= adj < s*9+9 and state.rest[adj] > 0 and state.hand[adj] < 4:
+                                useful.add(adj)
+            draw_order = list(useful)
+        draw_order.sort(key=lambda t: -(state.rest[t]*3 + state.hand[t]*5))
+
+        for draw_tile in draw_order:
+            if found:
+                return
+            if state.rest[draw_tile] <= 0 or state.hand[draw_tile] >= 4:
+                continue
+
+            # ——— 摸牌 ———
+            state.hand[draw_tile] += 1
+            state.rest[draw_tile] -= 1
+            path.append(('draw', draw_tile))
+
+            # ——— 和牌检查 ———
+            meld_count = sum(1 for a, _ in path if a in ('pon', 'chi', 'kan', 'ankan'))
+            if can_agari_with_melds(state.hand, meld_count):
+                from .yaku.regular import has_any_yaku
+                if has_any_yaku(state):
+                    best_score = 1
+                    best_path = path.copy()
+                    best_hand = state.hand.copy()
+                    best_yaku = ["最快和牌 (任意有役)"]
+                    found = True
+                    path.pop()
+                    state.rest[draw_tile] += 1
+                    state.hand[draw_tile] -= 1
+                    return
+
+            # ——— 弃牌 → 递归 ———
+            if depth + 1 < max_depth and not found:
                 discards = _discard_candidates(state, waits_before)[:4]
 
                 for discard_tile in discards:
@@ -563,8 +730,8 @@ def search_max_score(
                     state.rest[discard_tile] -= 1
                     state.hand[discard_tile] += 1
 
-            # ——— 快模式鸣牌 (碰/吃/杠) ———
-            if mode == "fast" and depth + 1 < max_depth and not found:
+            # ——— 鸣牌 (碰/吃/杠) ———
+            if depth + 1 < max_depth and not found:
                 meld_actions = generate_all_melds_from_wall(
                     state.hand, state.rest, state.melds
                 )
@@ -572,18 +739,15 @@ def search_max_score(
                     if found:
                         break
 
-                    # 确定需要从手牌移除的牌
                     if meld.meld_type == 'pon':
-                        hand_tiles = [meld.tiles[0], meld.tiles[0]]  # 手牌2张
+                        hand_tiles = [meld.tiles[0], meld.tiles[0]]
                     elif meld.meld_type == 'kan':
-                        hand_tiles = [meld.tiles[0]] * 3  # 手牌3张
+                        hand_tiles = [meld.tiles[0]] * 3
                     elif meld.meld_type == 'chi':
-                        # 吃的牌中, called_tile 来自牌河, 其余来自手牌
                         hand_tiles = [t for t in meld.tiles if t != meld.called_tile]
                     else:
                         continue
 
-                    # 验证手牌足够
                     valid = True
                     for ht in hand_tiles:
                         if state.hand[ht] <= 0:
@@ -592,14 +756,12 @@ def search_max_score(
                     if not valid:
                         continue
 
-                    # 从手牌移除, 从牌山扣除 called_tile
                     for ht in hand_tiles:
                         state.hand[ht] -= 1
                     called_tile = meld.called_tile if meld.called_tile is not None else meld.tiles[0]
                     state.rest[called_tile] -= 1
                     path.append((meld.meld_type, called_tile))
 
-                    # 鸣牌后弃1张 → 递归
                     post_discards = _discard_candidates(state)[:3]
                     for discard_tile in post_discards:
                         if found:
@@ -628,35 +790,27 @@ def search_max_score(
     # ── 入口处理 ─────────────────────────────────
 
     if initial_state.hand_size == 14:
-        # 用户传入 14 张（如在摸牌后）→ 先检查和牌
-        if can_agari(initial_state.hand):
-            score = calculate_score(initial_state)
-            if score > best_score:
-                best_score = score
-                best_path = [('_initial', -1)]
-                best_hand = initial_state.hand.copy()
-                best_yaku = _describe_yaku(initial_state, score)
+        # 14 张 → 先检查和牌
+        from .yaku.regular import has_any_yaku
+        if can_agari(initial_state.hand) and has_any_yaku(initial_state):
+            best_score = 1
+            best_path = [('_initial', -1)]
+            best_hand = initial_state.hand.copy()
+            best_yaku = ["最快和牌 (任意有役)"]
 
-        # 弃 1 张 → 回到 13 张, 然后开始搜索
-        candidates = _discard_candidates(initial_state)
-        best_initial_score = best_score
-
-        for discard_tile in candidates:
-            if initial_state.hand[discard_tile] <= 0:
-                continue
-            state = initial_state.copy()
-            state.hand[discard_tile] -= 1
-            state.rest[discard_tile] += 1
-            search(state, 0, [('discard', discard_tile)])
-
-        # 恢复可能的最佳路径
-        if best_score > best_initial_score:
-            pass  # 搜索过程中已更新
-        elif best_initial_score > 0:
-            best_score = best_initial_score
+        if not found:
+            candidates = _discard_candidates(initial_state)
+            for discard_tile in candidates:
+                if initial_state.hand[discard_tile] <= 0:
+                    continue
+                state = initial_state.copy()
+                state.hand[discard_tile] -= 1
+                state.rest[discard_tile] += 1
+                search(state, 0, [('discard', discard_tile)])
+                if found:
+                    break
 
     elif initial_state.hand_size == 13:
-        # 标准 13 张 → 直接开始搜索
         search(initial_state, 0, [])
 
     else:
@@ -676,6 +830,27 @@ def search_max_score(
         nodes_pruned=nodes_pruned,
         elapsed_ms=elapsed_ms,
     )
+
+
+def search_max_score(
+    initial_state: GameState,
+    max_depth: int = 5,
+    enable_pruning: bool = True,
+    mode: str = "max",
+) -> SearchResult:
+    """
+    搜索理论最优。
+
+    Args:
+        initial_state: 初始牌局状态 (13张标准)
+        max_depth: 最大摸牌次数
+        enable_pruning: 是否启用剪枝（仅 max 模式有效）
+        mode: "max" (最大番数) | "fast" (最快和牌)
+    """
+    if mode == "fast":
+        return search_fastest_win(initial_state, max_depth)
+    else:
+        return _search_max_score(initial_state, max_depth, enable_pruning)
 
 
 def search_no_pruning(initial_state: GameState,

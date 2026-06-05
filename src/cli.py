@@ -12,7 +12,7 @@ from .tile import (
     hand_to_list, dora_indicator_to_dora
 )
 from .state import GameState
-from .search import search_max_score, search_no_pruning
+from .search import search_max_score, search_fastest_win, search_no_pruning
 from .simulate import simulate_game
 
 
@@ -313,7 +313,10 @@ def run_cli():
     print("\n" + "-" * 40)
     print("正在搜索...")
 
-    result = search_max_score(state, max_depth=max_depth, enable_pruning=True, mode=mode)
+    if mode == "fast":
+        result = search_fastest_win(state, max_depth=max_depth)
+    else:
+        result = search_max_score(state, max_depth=max_depth, enable_pruning=True)
 
     # 无剪枝对比
     nodes_no_prune = search_no_pruning(state, max_depth=max_depth)
