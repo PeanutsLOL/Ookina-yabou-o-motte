@@ -54,8 +54,6 @@ def count_melds(counts: List[int]) -> int:
             if best == 4:
                 return 4
 
-    # 跳过这个牌（无法组成面子，但这是不完整的拆分）
-    # 在 count_melds 中，跳过通常意味着拆分失败
     return best
 
 

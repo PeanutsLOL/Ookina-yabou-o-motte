@@ -81,6 +81,15 @@ def optimistic_bonus(state: GameState, remaining_draws: int) -> int:
     if non_terminal <= remaining_draws:
         bonus += 1
 
+    # ── 四杠子 ──────────────────────────────
+    kan_in_melds = sum(1 for m in state.melds
+                       if m.meld_type in ("kan", "ankan", "kakan"))
+    kan_in_hand = sum(1 for t in range(NUM_TILES) if hand[t] >= 4)
+    near_kan = sum(1 for t in range(NUM_TILES) if hand[t] == 3)
+    potential_kan = kan_in_melds + kan_in_hand + min(near_kan, remaining_draws)
+    if potential_kan >= 4:
+        bonus += 1
+
     # ── 绿一色 ──────────────────────────────
     from .yaku.ryuuiisou import GREEN_TILES
     non_green = sum(hand[t] for t in range(NUM_TILES) if t not in GREEN_TILES)

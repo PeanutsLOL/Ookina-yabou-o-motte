@@ -226,7 +226,7 @@ class SearchResult:
 
         yakuman_count = self.max_score
         if yakuman_count == 1:
-            score_str = "1倍役满 (13番)"
+            score_str = "役满 (13番)"
         elif yakuman_count == 2:
             score_str = "双倍役满 (26番)"
         elif yakuman_count == 3:
