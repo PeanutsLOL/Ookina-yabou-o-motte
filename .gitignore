@@ -8,6 +8,7 @@ dist/
 build/
 .pytest_cache/
 output/
+Plan.md
 CLAUDE.md
 *.docx
 *.pptx
