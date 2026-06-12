@@ -12,7 +12,14 @@ python main.py
 python -m pytest tests/ -v
 ```
 
-**依赖**：纯 Python 3，无第三方库依赖。
+**依赖**：纯 Python 3，无第三方运行时依赖。
+
+测试依赖 pytest (需单独安装):
+
+```bash
+pip install pytest
+python -m pytest tests/ -v
+```
 
 ## 使用示例
 
